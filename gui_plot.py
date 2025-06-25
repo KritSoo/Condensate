@@ -7,10 +7,15 @@ import matplotlib.patches as patches
 import tkinter as tk
 from tkinter import ttk
 from datetime import timedelta
+import numpy as np
 
 from gui_config import *
+from gui_utils import read_csv_data
+from data_analyzer import add_trend_line_to_plot
 
 # Global variables for plot
+selected_date_str = None
+graph_type_combobox = None
 fig = None
 ax = None
 canvas = None
@@ -18,9 +23,17 @@ toolbar = None
 original_xlim = None
 original_ylim = None
 
-def setup_graph(parent, reset_callback=None):
+def setup_graph(parent, reset_callback=None, date_str=None, graph_combo=None):
     """Setup graph and its controls."""
-    global fig, ax, canvas, toolbar
+    global fig, ax, canvas, toolbar, selected_date_str, graph_type_combobox
+    
+    # Set global variables
+    selected_date_str = date_str
+    graph_type_combobox = graph_combo
+    
+    # Configure Thai fonts before creating the plot
+    from gui_utils import configure_thai_font
+    configure_thai_font()
     
     # Create plot
     fig = Figure(figsize=PLOT_FIGSIZE, dpi=PLOT_DPI)
@@ -98,7 +111,147 @@ def adjust_annotation_position(x, y, ax, text):
         bbox=bbox
     )
 
-def update_plot(timestamps, conductivities, temperatures, unit, graph_type):
+def decimate_data(timestamps, values, max_points=None, method=None):
+    """
+    Reduce the number of data points for efficient plotting while preserving important features.
+    
+    Parameters:
+    -----------
+    timestamps : list
+        List of datetime objects
+    values : list
+        List of values corresponding to timestamps
+    max_points : int
+        Maximum number of points to return (defaults to MAX_POINTS_TO_DISPLAY from config)
+    method : str
+        Decimation method ('lttb', 'minmax', or 'uniform')
+        
+    Returns:
+    --------
+    tuple
+        (downsampled_timestamps, downsampled_values)
+    """
+    # If decimation is disabled in config, return original data
+    if not DECIMATION_ENABLED:
+        return timestamps, values
+        
+    # Use config values if not specified
+    if max_points is None:
+        max_points = MAX_POINTS_TO_DISPLAY
+    if method is None:
+        method = DECIMATION_METHOD
+        
+    # If data points are fewer than max_points, return original data
+    if len(timestamps) <= max_points:
+        return timestamps, values
+    
+    if method == 'uniform':
+        # Simple uniform downsampling
+        indices = np.linspace(0, len(timestamps) - 1, max_points, dtype=int)
+        return [timestamps[i] for i in indices], [values[i] for i in indices]
+    
+    elif method == 'minmax':
+        # Min-max downsampling preserves extrema
+        # Convert to numpy arrays for easier manipulation
+        times_array = np.array(timestamps)
+        values_array = np.array(values)
+        
+        # Divide data into chunks
+        chunk_size = len(timestamps) // (max_points // 2)
+        downsampled_times = []
+        downsampled_values = []
+        
+        # Always include first and last points
+        downsampled_times.append(timestamps[0])
+        downsampled_values.append(values[0])
+        
+        # Process each chunk
+        for i in range(0, len(timestamps), chunk_size):
+            chunk = values_array[i:i+chunk_size]
+            if len(chunk) == 0:
+                continue
+                
+            # Find min and max in this chunk
+            min_idx = np.argmin(chunk) + i
+            max_idx = np.argmax(chunk) + i
+            
+            # Add min point (unless it's the same as max)
+            if min_idx != max_idx:
+                downsampled_times.append(timestamps[min_idx])
+                downsampled_values.append(values[min_idx])
+            
+            # Add max point
+            downsampled_times.append(timestamps[max_idx])
+            downsampled_values.append(values[max_idx])
+        
+        # Add last point if not already added
+        if timestamps[-1] != downsampled_times[-1]:
+            downsampled_times.append(timestamps[-1])
+            downsampled_values.append(values[-1])
+            
+        return downsampled_times, downsampled_values
+    
+    elif method == 'lttb':
+        # Largest-Triangle-Three-Buckets (LTTB) algorithm
+        # More sophisticated algorithm that preserves visual characteristics
+        
+        # Always include first and last points
+        result_times = [timestamps[0]]
+        result_values = [values[0]]
+        
+        if len(timestamps) <= 2:
+            return timestamps, values
+            
+        # Bucket size
+        bucket_size = (len(timestamps) - 2) / (max_points - 2)
+        
+        # Process all buckets except last
+        for i in range(max_points - 2):
+            # Bucket start and end
+            a_idx = int(i * bucket_size) + 1
+            b_idx = int((i + 1) * bucket_size) + 1
+            
+            # Last point in current bucket
+            if b_idx >= len(timestamps):
+                b_idx = len(timestamps) - 1
+            
+            # Last selected point
+            a_time, a_value = timestamps[a_idx - 1], values[a_idx - 1]
+            
+            max_area = -1
+            max_idx = a_idx
+            
+            # Find point in current bucket that creates largest triangle with 
+            # last selected point and next bucket representative
+            for j in range(a_idx, b_idx):
+                # Calculate triangle area
+                area = abs(
+                    (mdates.date2num(a_time) - mdates.date2num(timestamps[b_idx])) * 
+                    (values[j] - a_value) - 
+                    (mdates.date2num(a_time) - mdates.date2num(timestamps[j])) * 
+                    (values[b_idx] - a_value)
+                ) * 0.5
+                
+                if area > max_area:
+                    max_area = area
+                    max_idx = j
+            
+            # Add the point that gives largest triangle
+            result_times.append(timestamps[max_idx])
+            result_values.append(values[max_idx])
+        
+        # Add last point
+        result_times.append(timestamps[-1])
+        result_values.append(values[-1])
+        
+        return result_times, result_values
+    
+    else:
+        # Default: return original
+        print(f"Unknown decimation method: {method}")
+        return timestamps, values
+
+def update_plot(timestamps, conductivities, temperatures, unit, graph_type, analysis=None):
     """Update plot with new data."""
     global fig, ax, canvas
     
@@ -115,16 +268,50 @@ def update_plot(timestamps, conductivities, temperatures, unit, graph_type):
             end_time = timestamps[-1].replace(hour=23, minute=59, second=59)
             ax.set_xlim(start_time, end_time)
         
-        # Plot with value annotations
+        # Apply data decimation for better performance
         if graph_type == "Conductivity":
-            line = ax.plot(timestamps, conductivities, 'b.-', label='Conductivity')
+            # Get anomalies if available
+            anomalies = None
+            if analysis and 'conductivity' in analysis and 'anomalies' in analysis['conductivity']:
+                anomalies = analysis['conductivity']['anomalies']
+            
+            # Decimate data for plotting
+            plot_timestamps, plot_values = decimate_data(timestamps, conductivities)
+            line = ax.plot(plot_timestamps, plot_values, 'b.-', label='Conductivity')
             values = conductivities
+            
+            # Add trend line if analysis is available
+            if analysis and 'conductivity' in analysis and 'trend' in analysis['conductivity']:
+                trend_info = analysis['conductivity']['trend']
+                if trend_info['p_value'] < 0.1:  # Only show significant trends
+                    add_trend_line_to_plot(ax, timestamps, conductivities, color='g')
+            
         else:
-            line = ax.plot(timestamps, temperatures, 'r.-', label='Temperature')
+            # Get anomalies if available
+            anomalies = None
+            if analysis and 'temperature' in analysis and 'anomalies' in analysis['temperature']:
+                anomalies = analysis['temperature']['anomalies']
+                
+            # Decimate data for plotting
+            plot_timestamps, plot_values = decimate_data(timestamps, temperatures)
+            line = ax.plot(plot_timestamps, plot_values, 'r.-', label='Temperature')
             values = temperatures
             
-        # Add value annotations with smart positioning
-        for x, y in zip(timestamps, values):
+            # Add trend line if analysis is available
+            if analysis and 'temperature' in analysis and 'trend' in analysis['temperature']:
+                trend_info = analysis['temperature']['trend']
+                if trend_info['p_value'] < 0.1:  # Only show significant trends
+                    add_trend_line_to_plot(ax, timestamps, temperatures, color='orange')
+                    
+        # Add anomaly markers if available
+        if anomalies:
+            anomaly_indices, anomaly_times, anomaly_vals = anomalies
+            if anomaly_times and len(anomaly_times) > 0:
+                ax.scatter(anomaly_times, anomaly_vals, color='red', marker='o', s=100, 
+                          label='Anomalies', zorder=5, edgecolors='black')
+            
+        # Add value annotations with smart positioning (only for decimated points)
+        for x, y in zip(plot_timestamps, plot_values):
             text = f'{y:.1f}'
             adjust_annotation_position(x, y, ax, text)
         
@@ -142,6 +329,16 @@ def update_plot(timestamps, conductivities, temperatures, unit, graph_type):
         ax.grid(True)
         ax.legend()
         
+        # Show data count in corner
+        ax.annotate(
+            f'Points: {len(timestamps)} (showing {len(plot_timestamps)})', 
+            xy=(0.02, 0.98),
+            xycoords='axes fraction',
+            va='top',
+            fontsize=8,
+            alpha=0.7
+        )
+        
         # Enable better zoom interaction
         ax.set_picker(True)
         fig.tight_layout()
@@ -158,7 +355,7 @@ def reset_zoom():
         canvas.draw()
     else:
         # If original limits not stored, do full reset
-        timestamps, conductivities, temperatures, plot_unit = read_csv_data(selected_date_str)
+        timestamps, conductivities, temperatures, plot_unit = read_csv_data(selected_date_str, force_refresh=False)
         if timestamps:
             start_time = timestamps[0].replace(hour=0, minute=0, second=0)
             end_time = timestamps[-1].replace(hour=23, minute=59, second=59)
@@ -191,7 +388,10 @@ def plot_data(x_timestamps, y_conductivities):
     ax.clear()
     ax.grid(True)
     
-    line, = ax.plot(x_timestamps, y_conductivities, 'b-o',
+    # Apply data decimation
+    plot_timestamps, plot_values = decimate_data(x_timestamps, y_conductivities)
+    
+    line, = ax.plot(plot_timestamps, plot_values, 'b-o',
                     label='Conductivity',
                     markersize=POINT_SIZE,
                     markerfacecolor='white',

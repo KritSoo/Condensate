@@ -13,6 +13,17 @@ PLOT_FIGSIZE = (8, 6)
 POINT_SIZE = 6
 THRESHOLD_POINT_SIZE = 50
 
+# Data decimation configuration
+MAX_POINTS_TO_DISPLAY = 100  # Maximum number of points to display at once
+DECIMATION_METHOD = 'lttb'   # 'lttb', 'minmax', or 'uniform'
+DECIMATION_ENABLED = True    # Turn on/off decimation
+
+# Data analysis configuration
+SHOW_TREND_LINES = True      # แสดงเส้นแนวโน้ม
+SHOW_ANOMALIES = True        # แสดงจุดที่ผิดปกติ
+ANOMALY_METHOD = 'zscore'    # วิธีการตรวจจับความผิดปกติ ('zscore', 'iqr', 'isolation_forest')
+TREND_WINDOW_SIZE = 5        # ขนาดหน้าต่างสำหรับการคำนวณค่าเฉลี่ยเคลื่อนที่
+
 # Data validation
 MAX_CONDUCTIVITY = 10000.0
 MIN_CONDUCTIVITY = 0.0
