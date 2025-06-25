@@ -24,9 +24,11 @@ MOCK_DATA_MODE = True  # Set to False for real serial connection
 LOG_FILE = "sension7_data.csv"
 MEASUREMENT_INTERVAL = 0.1  # Time between measurements in seconds
 
-# Data validation constants (add these)
+# Data validation constants
 MIN_MOCK_VALUE = 100.0
-MAX_MOCK_VALUE = 1000.0
+MAX_MOCK_VALUE = 500.0
+MIN_MOCK_TEMP = 100.0
+MAX_MOCK_TEMP = 200.0
 SPIKE_PROBABILITY = 0.05  # 5% chance of spike in historical data
 
 def parse_sension_data(raw_data_string):
@@ -52,85 +54,75 @@ def parse_sension_data(raw_data_string):
         print(f"Error parsing data: {e}")
         return None, None
 
-def save_to_csv(timestamp, conductivity_value, unit, filename=LOG_FILE):
+def save_to_csv(timestamp, conductivity_value, unit, temperature=None, filename=LOG_FILE):
     """Save measurement data to CSV file with headers if new file."""
     try:
         file_exists = os.path.isfile(filename)
         with open(filename, 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
             if not file_exists:
-                writer.writerow(['Timestamp', 'Conductivity', 'Unit'])
+                writer.writerow(['Timestamp', 'Conductivity', 'Unit', 'Temperature'])
             writer.writerow([
                 timestamp.strftime('%Y-%m-%d %H:%M:%S'),
                 conductivity_value,
-                unit
+                unit,
+                temperature
             ])
     except IOError as e:
         print(f"Error saving to CSV: {e}")
 
 def generate_mock_historical_data(num_days=7):
-    """Generate mock historical conductivity data."""
+    """Generate mock historical conductivity and temperature data."""
     print(f"Generating {num_days} days of mock historical data...")
     
-    end_time = datetime.now() - timedelta(days=1)  # Stop at yesterday
+    end_time = datetime.now()  # Use exact current time
     start_time = end_time - timedelta(days=num_days)
     current_time = start_time
     
     while current_time < end_time:
-        # Generate base conductivity with some natural variation
         base_value = random.uniform(MIN_MOCK_VALUE, MAX_MOCK_VALUE * 0.6)
+        temperature = random.uniform(MIN_MOCK_TEMP, MAX_MOCK_TEMP)
         
-        # Occasionally add spikes
         if random.random() < SPIKE_PROBABILITY:
             base_value = random.uniform(MAX_MOCK_VALUE * 0.7, MAX_MOCK_VALUE)
         
-        # Randomly choose unit
         unit = random.choice(["uS/cm", "mS/cm"])
         
-        # Save to CSV
-        save_to_csv(current_time, base_value, unit)
+        # Add random minutes and seconds
+        current_time = current_time + timedelta(
+            hours=2,
+            minutes=random.randint(0, 59),
+            seconds=random.randint(0, 59)
+        )
         
-        # Increment by 10 minutes
-        current_time += timedelta(minutes=10)
+        save_to_csv(current_time, base_value, unit, temperature)
     
     print("Historical mock data generation complete")
 
 def read_and_process_data(ser_port=SERIAL_PORT, baud_rate=BAUD_RATE, 
                          timeout=TIMEOUT, data_callback=None):
-    """
-    Continuously read and process data from the HACH Sension7.
-    In mock mode, generates random conductivity values for testing.
-    
-    Args:
-        ser_port (str): Serial port name
-        baud_rate (int): Baud rate for serial communication
-        timeout (float): Serial timeout in seconds
-        data_callback (callable): Function to call with (timestamp, value, unit)
-    """
+    """Continuously read and process data."""
     ser = None
     try:
         if MOCK_DATA_MODE:
-            # Check if historical data needs to be generated
             if not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0:
                 generate_mock_historical_data(num_days=7)
             
             print("Running in MOCK DATA mode")
-            print("Generated data will be random values")
             while True:
-                # Generate mock conductivity data
+                timestamp = datetime.now()  # Use exact current time
                 mock_value = random.uniform(MIN_MOCK_VALUE, MAX_MOCK_VALUE)
+                mock_temp = random.uniform(MIN_MOCK_TEMP, MAX_MOCK_TEMP)
                 mock_unit = random.choice(["uS/cm", "mS/cm"])
-                mock_raw = f"{mock_value:.2f} {mock_unit} (MOCK)"
                 
-                print(f"Raw data: {mock_raw}")
+                save_to_csv(timestamp, mock_value, mock_unit, mock_temp)
                 
                 if data_callback:
-                    timestamp = datetime.now()
-                    data_callback(timestamp, mock_value, mock_unit)
+                    data_callback(timestamp, mock_value, mock_unit, mock_temp)
                     
-                time.sleep(120.0)  # Sleep for 2 minutes in mock mode
+                time.sleep(1800.0)
                 continue
-        
+
         # Real serial connection code
         ser = serial.Serial(
             port=ser_port,
@@ -149,7 +141,8 @@ def read_and_process_data(ser_port=SERIAL_PORT, baud_rate=BAUD_RATE,
                 value, unit = parse_sension_data(raw_data)
                 if value is not None and data_callback:
                     timestamp = datetime.now()
-                    data_callback(timestamp, value, unit)
+                    # เพิ่ม None สำหรับค่า temperature ในกรณีใช้งานจริง
+                    data_callback(timestamp, value, unit, None)
                 elif value is None:
                     print("Failed to parse data")
                     

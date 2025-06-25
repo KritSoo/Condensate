@@ -21,6 +21,12 @@ DEFAULT_Y_RANGE = (0, 1000)
 # Global state
 selected_date_str = datetime.now().strftime('%Y-%m-%d')
 
+# Graph types
+GRAPH_TYPE_CONDUCTIVITY = "Conductivity"
+GRAPH_TYPE_TEMPERATURE = "Temperature"
+
+selected_graph_type = GRAPH_TYPE_CONDUCTIVITY
+
 # GUI elements (initialized as None)
 root = None
 conductivity_value_label = None

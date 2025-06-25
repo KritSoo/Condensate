@@ -13,26 +13,18 @@ from serial_reader import (
 from gui_app import setup_gui, update_gui, run_gui
 from gui_config import selected_date_str  # Updated import
 
-def on_new_data(timestamp, conductivity, unit):
+def on_new_data(timestamp, conductivity, unit, temperature=None):
     """
     Callback function for handling new data from the serial reader.
     Updates GUI and logs data to CSV file.
-    
-    Args:
-        timestamp (datetime): Current timestamp
-        conductivity (float): Conductivity reading
-        unit (str): Measurement unit
     """
-    # Print to console for monitoring
-    print(f"[{timestamp}] Conductivity: {conductivity} {unit}")
+    print(f"[{timestamp}] Conductivity: {conductivity} {unit}, Temp: {temperature}°C")
     
-    # Update GUI based on selected date
     current_date = timestamp.strftime("%Y-%m-%d")
-    if current_date == selected_date_str:  # Updated reference
-        update_gui(timestamp, conductivity, unit)
+    if current_date == selected_date_str:
+        update_gui(timestamp, conductivity, unit, temperature)
     
-    # Save data to CSV regardless of selected date
-    save_to_csv(timestamp, conductivity, unit)
+    save_to_csv(timestamp, conductivity, unit, temperature)
 
 def main():
     """Main program entry point."""
