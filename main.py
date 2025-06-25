@@ -4,6 +4,7 @@ HACH Sension7 Conductivity Data Logger - Main Entry Point
 
 import threading
 from datetime import datetime
+#commit ผ่าน vscode ยากชิบหาย
 
 # Import from our modules
 from serial_reader import (
