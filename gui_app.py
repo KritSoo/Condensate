@@ -17,6 +17,7 @@ from gui_utils import (
     get_data_trend_analysis, format_statistics_for_display
 )
 from gui_compare import ComparisonWindow
+from config_manager import get_config  # เพิ่ม import ตรงนี้
 
 selected_date_str = datetime.now().strftime("%Y-%m-%d")
 
@@ -71,6 +72,9 @@ def setup_gui():
     # Setup graph in graph_frame
     setup_graph(graph_frame, reset_callback=reset_zoom, 
                date_str=selected_date_str, graph_combo=graph_type_combobox)
+    
+    # ใช้ธีมตามการตั้งค่า
+    apply_theme(root)
     
     return root
 
@@ -516,6 +520,11 @@ def update_current_readings(timestamp, conductivity, unit, temperature=None):
         if temperature is not None:
             temperature_value_label.config(text=f"{temperature:.2f} °C")
         time_label.config(text=timestamp.strftime("%Y-%m-%d %H:%M:%S"))
+    else:
+        # แสดงสถานะว่ากำลังรอข้อมูลแทนที่จะแสดง N/A
+        conductivity_value_label.config(text="กำลังรอข้อมูล...")
+        temperature_value_label.config(text="กำลังรอข้อมูล...")
+        time_label.config(text=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 def apply_filters(x_timestamps, y_conductivities, filter_min, filter_max):
     """Apply min/max filters to data."""
@@ -580,3 +589,259 @@ def show_settings_dialog(parent):
     settings_dialog = SettingsDialog(parent)
     
     # สร้าง main container
+    container = ttk.Frame(settings_dialog.window, padding="10")
+    container.grid(row=0, column=0, sticky="nsew")
+    
+    # ขยาย grid ให้เต็มพื้นที่
+    settings_dialog.window.grid_rowconfigure(0, weight=1)
+    settings_dialog.window.grid_columnconfigure(0, weight=1)
+    container.grid_rowconfigure(0, weight=1)
+    container.grid_columnconfigure(0, weight=1)
+    
+    # สร้างโน้ตบุ๊คสำหรับแท็บต่างๆ
+    notebook = ttk.Notebook(container)
+    notebook.grid(row=0, column=0, sticky="nsew")
+    
+    # สร้างแท็บสำหรับการตั้งค่าทั่วไป
+    general_tab = ttk.Frame(notebook)
+    notebook.add(general_tab, text="ทั่วไป")
+    
+    # ตัวเลือกการแสดงผล
+    display_frame = ttk.LabelFrame(general_tab, text="การแสดงผล", padding="5")
+    display_frame.pack(fill="x", pady=(0, 10))
+    
+    # ธีม
+    ttk.Label(display_frame, text="ธีม:").pack(anchor="w")
+    theme_var = StringVar(value=get_config().get('display', 'theme', fallback='light'))
+    theme_light_rb = ttk.Radiobutton(display_frame, text="สว่าง", variable=theme_var, value="light")
+    theme_light_rb.pack(anchor="w")
+    theme_dark_rb = ttk.Radiobutton(display_frame, text="มืด", variable=theme_var, value="dark")
+    theme_dark_rb.pack(anchor="w")
+    
+    # แสดงกริด
+    show_grid_var = BooleanVar(value=get_config().get('display', 'show_grid', fallback=True))
+    ttk.Checkbutton(display_frame, text="แสดงกริดในกราฟ", variable=show_grid_var).pack(anchor="w")
+    
+    # ปุ่มบันทึกการตั้งค่า
+    ttk.Button(general_tab, text="บันทึกการตั้งค่า", command=lambda: save_settings(theme_var.get(), show_grid_var.get())).pack(pady=10)
+    
+    # สร้างแท็บสำหรับการตั้งค่าขั้นสูง
+    advanced_tab = ttk.Frame(notebook)
+    notebook.add(advanced_tab, text="ขั้นสูง")
+    
+    # ตัวเลือกการวิเคราะห์
+    analysis_frame = ttk.LabelFrame(advanced_tab, text="การวิเคราะห์", padding="5")
+    analysis_frame.pack(fill="x", pady=(0, 10))
+    
+    # วิธีตรวจจับความผิดปกติ
+    ttk.Label(analysis_frame, text="วิธีตรวจจับความผิดปกติ:").pack(anchor="w")
+    anomaly_method_var = StringVar(value=ANOMALY_METHOD)
+    anomaly_method_combo = ttk.Combobox(analysis_frame, textvariable=anomaly_method_var, 
+                                       state='readonly', width=15)
+    anomaly_method_combo['values'] = ["zscore", "iqr", "isolation_forest"]
+    anomaly_method_combo.pack(anchor="w", pady=(0, 5))
+    
+    # ปุ่มบันทึกการตั้งค่า
+    ttk.Button(advanced_tab, text="บันทึกการตั้งค่า", command=lambda: save_advanced_settings(anomaly_method_var.get())).pack(pady=10)
+    
+    # แสดงหน้าต่าง
+    settings_dialog.show()
+    
+def save_settings(theme, show_grid):
+    """Save general settings to config."""
+    config = get_config()
+    config['display']['theme'] = theme
+    config['display']['show_grid'] = str(show_grid).lower()
+    
+    with open('config.ini', 'w') as configfile:
+        config.write(configfile)
+        
+    # Apply theme immediately
+    apply_theme()
+    
+    messagebox.showinfo("Settings", "บันทึกการตั้งค่าเรียบร้อยแล้ว")
+
+def save_advanced_settings(anomaly_method):
+    """Save advanced settings to config."""
+    config = get_config()
+    config['anomaly_detection']['method'] = anomaly_method
+    
+    with open('config.ini', 'w') as configfile:
+        config.write(configfile)
+        
+    messagebox.showinfo("Settings", "บันทึกการตั้งค่าขั้นสูงเรียบร้อยแล้ว")
+
+def apply_theme(root_window=None):
+    """Apply the selected theme from config to the application UI."""
+    if root_window is None and 'root' in globals():
+        root_window = root
+        
+    if not root_window:
+        return
+        
+    config = get_config()
+    theme = config.get('display', 'theme', fallback='light')
+    
+    # สร้าง style object
+    style = ttk.Style(root_window)
+    
+    # ตั้งค่าธีมตามที่เลือก
+    if theme == 'dark':
+        # ใช้ธีม clam เป็นพื้นฐาน
+        style.theme_use('clam')
+        
+        # ใช้สีโทนเข้มเป็นพื้นหลัง และสีอ่อนเป็นตัวอักษร
+        root_window.configure(bg='#2E2E2E')
+        
+        # ตั้งค่าสีพื้นหลักสำหรับ Frame
+        style.configure('TFrame', background='#2E2E2E')
+        style.configure('TLabel', background='#2E2E2E', foreground='#FFFFFF')
+        
+        # ตั้งค่า Button ให้มองเห็นได้ชัดเจน
+        style.configure('TButton', background='#3E3E3E', foreground='#FFFFFF', relief='raised')
+        style.map('TButton', 
+                  background=[('active', '#4E4E4E')],
+                  foreground=[('active', '#FFFFFF')])
+                  
+        # ตั้งค่า LabelFrame
+        style.configure('TLabelframe', background='#2E2E2E', foreground='#FFFFFF')
+        style.configure('TLabelframe.Label', background='#2E2E2E', foreground='#FFFFFF')
+        
+        # ตั้งค่า Entry และ Combobox
+        style.configure('TEntry', fieldbackground='#3E3E3E', foreground='#FFFFFF')
+        style.configure('TCombobox', fieldbackground='#3E3E3E', foreground='#FFFFFF', 
+                       arrowcolor='#FFFFFF', background='#3E3E3E')
+        style.map('TCombobox', 
+                 fieldbackground=[('readonly', '#3E3E3E')], 
+                 foreground=[('readonly', '#FFFFFF')])
+                 
+        # ตั้งค่า Checkbutton
+        style.configure('TCheckbutton', background='#2E2E2E', foreground='#FFFFFF')
+        style.map('TCheckbutton', 
+                  background=[('active', '#2E2E2E')], 
+                  foreground=[('active', '#FFFFFF')])
+        
+        # ตั้งค่าสีพื้นหลังสำหรับ Canvas และส่วนเสริมอื่นๆ
+        style.configure('Canvas', background='#2E2E2E')
+        style.configure('TScrollbar', background='#2E2E2E', troughcolor='#3E3E3E', 
+                       arrowcolor='#FFFFFF')
+        
+        # ตั้งค่า canvas ใน graph frame ถ้ามี
+        try:
+            from gui_plot import figure_canvas
+            if figure_canvas:
+                figure_canvas.get_tk_widget().configure(bg='#2E2E2E')
+                figure_canvas.figure.patch.set_facecolor('#2E2E2E')
+                figure_canvas.figure.axes[0].set_facecolor('#3E3E3E')
+                figure_canvas.figure.axes[0].tick_params(colors='#FFFFFF')
+                figure_canvas.figure.axes[0].xaxis.label.set_color('#FFFFFF')
+                figure_canvas.figure.axes[0].yaxis.label.set_color('#FFFFFF')
+                figure_canvas.figure.axes[0].title.set_color('#FFFFFF')
+                figure_canvas.draw()
+        except Exception as e:
+            print(f"Error applying theme to graph: {e}")
+            
+    else:  # light theme (default)
+        # ใช้ธีม default หรือ classic
+        style.theme_use('default')
+        
+        # ใช้สีโทนอ่อนเป็นพื้นหลัง และสีเข้มเป็นตัวอักษร
+        root_window.configure(bg='#F0F0F0')
+        
+        # ตั้งค่าสีกลับไปเป็นค่าเริ่มต้น
+        style.configure('TFrame', background='#F0F0F0')
+        style.configure('TLabel', background='#F0F0F0', foreground='#000000')
+        
+        # ตั้งค่า Button แบบปกติ
+        style.configure('TButton') # Reset to default
+        style.map('TButton') # Reset to default
+        
+        # ตั้งค่าส่วนประกอบต่างๆ กลับไปเป็นค่าเริ่มต้น
+        style.configure('TLabelframe', background='#F0F0F0')
+        style.configure('TLabelframe.Label', background='#F0F0F0', foreground='#000000')
+        style.configure('TEntry', fieldbackground='#FFFFFF', foreground='#000000')
+        style.configure('TCombobox')
+        style.map('TCombobox')
+        style.configure('TCheckbutton', background='#F0F0F0', foreground='#000000')
+        style.map('TCheckbutton')
+        style.configure('Canvas', background='#F0F0F0')
+        style.configure('TScrollbar')
+        
+        # ตั้งค่า canvas ใน graph frame ถ้ามี
+        try:
+            from gui_plot import figure_canvas
+            if figure_canvas:
+                figure_canvas.get_tk_widget().configure(bg='#F0F0F0')
+                figure_canvas.figure.patch.set_facecolor('#F0F0F0')
+                figure_canvas.figure.axes[0].set_facecolor('#FFFFFF')
+                figure_canvas.figure.axes[0].tick_params(colors='#000000')
+                figure_canvas.figure.axes[0].xaxis.label.set_color('#000000')
+                figure_canvas.figure.axes[0].yaxis.label.set_color('#000000')
+                figure_canvas.figure.axes[0].title.set_color('#000000')
+                figure_canvas.draw()
+        except Exception as e:
+            print(f"Error applying theme to graph: {e}")
+    
+    # ทำให้แน่ใจว่าทุก widget อัปเดตสถานะการแสดงผล
+    try:
+        for widget in root_window.winfo_children():
+            widget.update_idletasks()
+    except:
+        pass
+    
+    print(f"Applied {theme} theme to UI")
+    
+def refresh_ui():
+    """Refresh the UI with current settings."""
+    config = get_config()
+    
+    # Apply theme
+    apply_theme()
+    
+    # Update any settings from config that might have changed
+    show_grid = config.get('display', 'show_grid', fallback=True)
+    
+    # Update graph with grid setting if applicable
+    try:
+        from gui_plot import figure_canvas, ax
+        if ax:
+            ax.grid(show_grid)
+            figure_canvas.draw()
+    except Exception as e:
+        print(f"Error updating grid setting: {e}")
+    
+    # Force refresh of data
+    refresh_data()
+    
+    print("UI refreshed with current settings")
+
+def reset_theme_emergency():
+    """รีเซ็ตธีมฉุกเฉิน กลับไปยังค่าเริ่มต้นถ้าเกิดปัญหาในการแสดงผล"""
+    try:
+        style = ttk.Style()
+        style.theme_use('default')  # ใช้ธีมเริ่มต้นของระบบ
+        
+        # รีเซ็ตการกำหนดค่าต่างๆ
+        style.configure('.')  # รีเซ็ตทุก style
+        
+        # บันทึกการเปลี่ยนแปลงไปยังไฟล์ config
+        config = get_config()
+        config.set('display', 'theme', 'light')
+        config.save()
+        
+        # แสดงข้อความ
+        messagebox.showinfo(
+            "รีเซ็ตธีม",
+            "ได้รีเซ็ตธีมเรียบร้อยแล้ว\nโปรแกรมจะกลับมาใช้ธีมเริ่มต้น"
+        )
+        
+        # รีเฟรชหน้าจอ
+        refresh_ui()
+        
+    except Exception as e:
+        print(f"Error in emergency theme reset: {e}")
+        messagebox.showerror(
+            "ข้อผิดพลาด",
+            f"เกิดข้อผิดพลาดในการรีเซ็ตธีม: {str(e)}\n"
+            "โปรดรีสตาร์ทโปรแกรม"
+        )

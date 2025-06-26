@@ -19,13 +19,14 @@ graph_type_combobox = None
 fig = None
 ax = None
 canvas = None
+figure_canvas = None  # เพิ่มตัวแปรเพื่อให้สามารถเข้าถึง canvas ได้จากไฟล์อื่น
 toolbar = None
 original_xlim = None
 original_ylim = None
 
 def setup_graph(parent, reset_callback=None, date_str=None, graph_combo=None):
     """Setup graph and its controls."""
-    global fig, ax, canvas, toolbar, selected_date_str, graph_type_combobox
+    global fig, ax, canvas, figure_canvas, toolbar, selected_date_str, graph_type_combobox
     
     # Set global variables
     selected_date_str = date_str
@@ -48,6 +49,10 @@ def setup_graph(parent, reset_callback=None, date_str=None, graph_combo=None):
     canvas = FigureCanvasTkAgg(fig, master=parent)
     canvas.get_tk_widget().pack(fill="both", expand=True)
     canvas.draw()
+    
+    # กำหนดให้ figure_canvas มีค่าเดียวกับ canvas เพื่อให้สามารถเข้าถึงได้จากไฟล์อื่น
+    global figure_canvas
+    figure_canvas = canvas
     
     # Add navigation toolbar
     toolbar = NavigationToolbar2Tk(canvas, parent)

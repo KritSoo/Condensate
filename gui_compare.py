@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import os
 
+# Make sure to import the ScrollableFrame class
+from gui_scrollable import ScrollableFrame
 from gui_config import *
 from data_analyzer import (
     compare_days_data, plot_comparison_graph,
@@ -194,34 +196,61 @@ class ComparisonWindow:
         # Show similar days in a new window
         similar_window = tk.Toplevel(self.window)
         similar_window.title(f"วันที่มีรูปแบบคล้ายกับ {reference_date}")
-        similar_window.geometry("400x300")
+        similar_window.geometry("500x400")
         
-        ttk.Label(similar_window, 
+        main_frame = ttk.Frame(similar_window, padding="10")
+        main_frame.pack(fill="both", expand=True)
+        
+        ttk.Label(main_frame, 
                  text=f"วันที่มีรูปแบบคล้ายกับ {reference_date} ({data_type})",
                  font=("Helvetica", 12, "bold")).pack(pady=10)
         
-        # Create table of similar days
-        frame = ttk.Frame(similar_window, padding="10")
-        frame.pack(fill="both", expand=True)
+        # Create scrollable container for table
+        scroll_container = ScrollableFrame(main_frame)
+        scroll_container.pack(fill="both", expand=True, pady=5)
+        
+        # Get the frame to add content to
+        table_frame = scroll_container.get_frame()
         
         # Create table headers
-        ttk.Label(frame, text="วันที่", width=15, anchor="w", 
+        header_frame = ttk.Frame(table_frame)
+        header_frame.pack(fill="x", pady=5)
+        
+        ttk.Label(header_frame, text="วันที่", width=15, anchor="w", 
                  font=("Helvetica", 10, "bold")).grid(row=0, column=0, padx=5, pady=5)
-        ttk.Label(frame, text="ค่าความคล้าย", width=15, anchor="w",
+        ttk.Label(header_frame, text="ค่าความคล้าย", width=15, anchor="w",
                  font=("Helvetica", 10, "bold")).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(header_frame, text="", width=8).grid(row=0, column=2, padx=5, pady=5)
+        
+        # Add separator line
+        separator = ttk.Separator(table_frame, orient="horizontal")
+        separator.pack(fill="x", pady=5)
         
         # Add similar days to table
-        for i, (day, score) in enumerate(similar_days, 1):
-            ttk.Label(frame, text=day).grid(row=i, column=0, padx=5, pady=5)
-            ttk.Label(frame, text=f"{score:.4f}").grid(row=i, column=1, padx=5, pady=5)
+        for i, (day, score) in enumerate(similar_days):
+            row_frame = ttk.Frame(table_frame)
+            row_frame.pack(fill="x", pady=2)
+            
+            ttk.Label(row_frame, text=day, width=15, anchor="w").grid(
+                row=0, column=0, padx=5, pady=5)
+            ttk.Label(row_frame, text=f"{score:.4f}", width=15, anchor="w").grid(
+                row=0, column=1, padx=5, pady=5)
             
             # Add button to select this day for comparison
-            ttk.Button(frame, text="เลือก", 
+            ttk.Button(row_frame, text="เลือก", width=8,
                       command=lambda d=day: self.select_day_for_comparison(d)).grid(
-                          row=i, column=2, padx=5, pady=5)
+                          row=0, column=2, padx=5, pady=5)
+            
+            # Add alternating row colors
+            if i % 2 == 1:
+                row_frame.configure(style="Alt.TFrame")
         
-        ttk.Button(similar_window, text="เลือกทั้งหมด", 
-                  command=lambda: self.select_days_for_comparison([d for d, _ in similar_days])).pack(pady=10)
+        # Add button frame at bottom
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=10)
+        
+        ttk.Button(button_frame, text="เลือกทั้งหมด", 
+                  command=lambda: self.select_days_for_comparison([d for d, _ in similar_days])).pack(side="right", padx=5)
     
     def select_day_for_comparison(self, day):
         """Select a single day for comparison."""
@@ -338,51 +367,65 @@ class ComparisonWindow:
         # Show report in a new window
         report_window = tk.Toplevel(self.window)
         report_window.title(f"รายงานสถิติเปรียบเทียบ - {data_type}")
-        report_window.geometry("800x400")
+        report_window.geometry("800x600")  # Make window taller for better viewing
         
-        ttk.Label(report_window, 
+        # Add a main frame
+        main_frame = ttk.Frame(report_window)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Add title at the top
+        ttk.Label(main_frame, 
                  text=f"รายงานสถิติเปรียบเทียบ - {data_type}",
                  font=("Helvetica", 12, "bold")).pack(pady=10)
         
-        # Create table frame with scrollbars
-        table_frame = ttk.Frame(report_window)
-        table_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        # Create scrollable frame for table with both vertical and horizontal scrolling
+        table_container = ScrollableFrame(main_frame, horizontal_scroll=True)
+        table_container.pack(fill="both", expand=True, pady=5)
         
-        # Create vertical scrollbar
-        v_scrollbar = ttk.Scrollbar(table_frame, orient="vertical")
-        v_scrollbar.pack(side="right", fill="y")
+        # Get the frame to add content to
+        table_frame = table_container.get_frame()
         
-        # Create horizontal scrollbar
-        h_scrollbar = ttk.Scrollbar(table_frame, orient="horizontal")
-        h_scrollbar.pack(side="bottom", fill="x")
+        # Create header row
+        header_frame = ttk.Frame(table_frame)
+        header_frame.pack(fill="x", pady=2)
         
-        # Create treeview for table
-        table = ttk.Treeview(
-            table_frame, 
-            columns=list(report_df.columns), 
-            show="headings",
-            yscrollcommand=v_scrollbar.set,
-            xscrollcommand=h_scrollbar.set
-        )
+        # Set column headers with consistent widths
+        column_width = 120
+        for col_idx, col in enumerate(report_df.columns):
+            header_label = ttk.Label(header_frame, text=col, width=column_width//10, 
+                                   font=("Helvetica", 10, "bold"), anchor="center")
+            header_label.grid(row=0, column=col_idx, padx=2, pady=2)
         
-        # Configure scrollbars
-        v_scrollbar.config(command=table.yview)
-        h_scrollbar.config(command=table.xview)
-        
-        # Set column headers
-        for col in report_df.columns:
-            table.heading(col, text=col)
-            table.column(col, width=100, anchor="center")
+        # Add separator
+        separator = ttk.Separator(table_frame, orient="horizontal")
+        separator.pack(fill="x", pady=2)
         
         # Add data rows
-        for _, row in report_df.iterrows():
-            table.insert("", "end", values=list(row))
+        for row_idx, (_, row) in enumerate(report_df.iterrows(), start=1):
+            row_frame = ttk.Frame(table_frame)
+            row_frame.pack(fill="x", pady=1)
+            
+            # Add each cell in the row
+            for col_idx, value in enumerate(row):
+                # Format value with 3 decimal places if it's a number
+                if isinstance(value, (int, float)):
+                    formatted_value = f"{value:.3f}" if isinstance(value, float) else str(value)
+                else:
+                    formatted_value = str(value)
+                
+                cell_label = ttk.Label(row_frame, text=formatted_value, width=column_width//10, anchor="center")
+                cell_label.grid(row=0, column=col_idx, padx=2, pady=2)
+                
+                # Add alternating row colors
+                if row_idx % 2 == 0:
+                    cell_label.configure(background="#f0f0f0")
         
-        table.pack(fill="both", expand=True)
+        # Add export button at bottom
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=10)
         
-        # Add export button
-        ttk.Button(report_window, text="ส่งออกรายงาน", 
-                  command=lambda: self.export_report()).pack(pady=10)
+        ttk.Button(button_frame, text="ส่งออกรายงาน", 
+                  command=lambda: self.export_report()).pack(side="right", padx=5)
     
     def save_graph(self):
         """Save current graph to file."""

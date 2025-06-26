@@ -13,6 +13,45 @@ import csv
 import re
 import os
 import random  # Add import for random number generation
+import logging  # เพิ่ม logging เพื่อดี bug ได้ง่ายขึ้น
+import sys
+import tempfile
+
+# ตรวจสอบและสร้างไฟล์ log ในตำแหน่งที่เขียนได้
+try:
+    # พยายามใช้โฟลเดอร์ logs ในไดเรกทอรีของแอป
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(app_dir, "logs")
+    
+    # สร้างโฟลเดอร์ถ้าไม่มี
+    if not os.path.exists(log_dir):
+        try:
+            os.makedirs(log_dir)
+            log_file = os.path.join(log_dir, "serial_debug.log")
+        except:
+            # หากไม่สามารถสร้างโฟลเดอร์ logs ได้ ให้ใช้ไดเรกทอรีของแอป
+            log_file = os.path.join(app_dir, "serial_debug.log")
+    else:
+        log_file = os.path.join(log_dir, "serial_debug.log")
+
+    # ทดสอบเขียนไฟล์
+    with open(log_file, 'a'):
+        pass
+except:
+    # หากไม่สามารถเขียนในไดเรกทอรีหลักได้ ให้ใช้โฟลเดอร์ temporary
+    log_file = os.path.join(tempfile.gettempdir(), "condensate_serial_debug.log")
+    print(f"Cannot write to app directory, using temp file: {log_file}")
+
+# ตั้งค่า logging สำหรับแสดงข้อมูล debug
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
+logging.info(f"Logging initialized. Log file: {log_file}")
 
 # Import configuration and adapter modules
 from config_manager import get_config
@@ -27,7 +66,7 @@ BAUD_RATE = config.get('serial', 'baud_rate', fallback=9600)
 TIMEOUT = config.get('serial', 'timeout', fallback=1.0)
 MOCK_DATA_MODE = config.get('device', 'mock_data', fallback=True)
 
-# Data logging configuration
+# Data logging configuration - use get_log_file_path for complete path
 LOG_FILE = config.get('logging', 'log_file', fallback="sension7_data.csv")
 BACKUP_ENABLED = config.get('logging', 'backup_enabled', fallback=True)
 MEASUREMENT_INTERVAL = config.get('device', 'measurement_interval', fallback=0.1)
@@ -51,13 +90,21 @@ def parse_data(raw_data_string):
         tuple: (float or None, str or None, float or None) - (conductivity value, unit, temperature)
     """
     try:
+        # Log the raw data received for debugging
+        logging.debug(f"Parsing raw data: {repr(raw_data_string)}")
+        
+        # Try to clean the data if it has garbage characters
+        cleaned_data = raw_data_string.strip()
+        
         # Use the device adapter to parse the data
-        return device_adapter.parse_data(raw_data_string)
+        result = device_adapter.parse_data(cleaned_data)
+        logging.debug(f"Parse result: {result}")
+        return result
     except Exception as e:
-        print(f"Error parsing data: {e}")
+        logging.error(f"Error parsing data: {e}", exc_info=True)
         return None, None, None
 
-def save_to_csv(timestamp, conductivity_value, unit, temperature=None, filename=LOG_FILE):
+def save_to_csv(timestamp, conductivity_value, unit, temperature=None, filename=None):
     """Save measurement data to CSV file with headers if new file."""
     # Prepare data row
     data_row = [
@@ -67,9 +114,17 @@ def save_to_csv(timestamp, conductivity_value, unit, temperature=None, filename=
         temperature
     ]
     
-    # Create absolute path for the file if it's not already
-    if not os.path.isabs(filename):
-        filepath = os.path.join(os.getcwd(), filename)
+    # Get the file path from configuration if not specified
+    if filename is None:
+        filepath = get_log_file_path()
+    elif not os.path.isabs(filename):
+        # If relative path, use the configured log directory
+        config = get_config()
+        log_dir = config.get('logging', 'log_directory')
+        if log_dir and os.path.exists(log_dir):
+            filepath = os.path.join(log_dir, filename)
+        else:
+            filepath = os.path.join(os.getcwd(), filename)
     else:
         filepath = filename
     
@@ -78,7 +133,7 @@ def save_to_csv(timestamp, conductivity_value, unit, temperature=None, filename=
         # Create directory if it doesn't exist
         directory = os.path.dirname(filepath)
         if directory and not os.path.exists(directory):
-            os.makedirs(directory)
+            os.makedirs(directory, exist_ok=True)
             
         file_exists = os.path.isfile(filepath)
         # Use explicit mode 'a' for append
@@ -99,9 +154,10 @@ def save_to_csv(timestamp, conductivity_value, unit, temperature=None, filename=
         
         # If main file has issues, try to save to a backup file
         try:
-            # Use current directory for backup to avoid permission issues
-            backup_filename = f"{os.path.splitext(os.path.basename(filepath))[0]}_backup.csv"
-            backup_filepath = os.path.join(os.getcwd(), backup_filename)
+            # Use user's home directory for backup to avoid permission issues
+            home_dir = os.path.expanduser("~")
+            backup_filename = f"condensate_backup_{os.path.basename(filepath)}"
+            backup_filepath = os.path.join(home_dir, backup_filename)
             
             backup_exists = os.path.isfile(backup_filepath)
             
@@ -116,13 +172,16 @@ def save_to_csv(timestamp, conductivity_value, unit, temperature=None, filename=
         except Exception as backup_e:
             print(f"Error saving to backup CSV: {backup_e}")
             
-            # Last resort: Try to write to user's home directory
+            # Last resort: Try to write to user's temp directory
             try:
-                home_dir = os.path.expanduser("~")
-                last_resort_file = os.path.join(home_dir, "sension7_emergency_backup.csv")
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+                last_resort_file = os.path.join(temp_dir, "condensate_emergency_backup.csv")
+                last_resort_exists = os.path.isfile(last_resort_file)
+                
                 with open(last_resort_file, 'a', newline='') as emergency_file:
                     writer = csv.writer(emergency_file)
-                    if not os.path.getsize(last_resort_file):
+                    if not last_resort_exists:
                         writer.writerow(['Timestamp', 'Conductivity', 'Unit', 'Temperature'])
                     writer.writerow(data_row)
                 print(f"Data saved to emergency backup: {last_resort_file}")
@@ -179,15 +238,20 @@ def read_and_process_data(ser_port=None, baud_rate=None,
         ensure_log_directory_exists()
         check_filesystem_permissions()
         
+        # Log starting configuration
+        logging.info(f"Starting serial reading with: PORT={ser_port}, BAUD={baud_rate}, TIMEOUT={timeout}")
+        logging.info(f"Using device model: {DEVICE_MODEL}")
+        logging.info(f"Log file path: {get_log_file_path()}")
+        
         # Use direct file writes to verify system is working
         test_file = "serial_reader_test.txt"
         try:
             with open(test_file, 'w') as f:
                 f.write(f"Test file created at {datetime.now()}\n")
-            print(f"Successfully created test file: {test_file}")
-            print(f"Using device: {DEVICE_MODEL}")
+            logging.info(f"Successfully created test file: {test_file}")
+            logging.info(f"Using device: {DEVICE_MODEL}")
         except Exception as e:
-            print(f"WARNING: Could not create test file: {e}")
+            logging.warning(f"WARNING: Could not create test file: {e}")
         
         if MOCK_DATA_MODE:
             if not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0:
@@ -235,28 +299,64 @@ def read_and_process_data(ser_port=None, baud_rate=None,
             stopbits=serial.STOPBITS_ONE
         )
         
+        logging.info(f"Serial port opened successfully: {ser_port}")
+        buffer = ""  # Buffer to accumulate incoming data
+        
         while True:
             # Send command if needed by device
             if command_string:
                 try:
                     ser.write(command_string)
-                    print(f"Command sent: {command_string}")
+                    logging.debug(f"Command sent: {command_string}")
                 except Exception as cmd_e:
-                    print(f"Error sending command: {cmd_e}")
-                
-            # Wait for response
-            if ser.in_waiting:
-                raw_data = ser.readline().decode('utf-8', errors='ignore')
-                print(f"Raw data: {raw_data.strip()}")
-                
-                value, unit, temperature = parse_data(raw_data)
-                if value is not None and data_callback:
-                    timestamp = datetime.now()
-                    # ใช้ค่าอุณหภูมิจากเครื่องวัด (ถ้ามี)
-                    data_callback(timestamp, value, unit, temperature)
-                elif value is None:
-                    print("Failed to parse data")
+                    logging.error(f"Error sending command: {cmd_e}")
+            
+            # สำหรับ Sension7 เมื่อกด Print ปุ่มที่เครื่อง
+            try:
+                # ตรวจสอบว่ามีข้อมูลรอการอ่านหรือไม่
+                if ser.in_waiting:
+                    # อ่านข้อมูลจาก serial port
+                    new_data = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
+                    buffer += new_data
+                    logging.debug(f"Received data: {repr(new_data)}")
                     
+                    # ตรวจสอบว่าข้อมูลสมบูรณ์แล้วหรือไม่ (มีตัวขึ้นบรรทัดใหม่หรือไม่)
+                    if '\n' in buffer:
+                        lines = buffer.split('\n')
+                        # เก็บบรรทัดสุดท้ายที่อาจจะไม่สมบูรณ์ไว้ในบัฟเฟอร์ต่อไป
+                        buffer = lines.pop()
+                        
+                        # ประมวลผลแต่ละบรรทัด
+                        for line in lines:
+                            if line.strip():  # ตรวจสอบว่าไม่ใช่บรรทัดว่าง
+                                logging.info(f"Processing line: {repr(line)}")
+                                value, unit, temperature = parse_data(line)
+                                
+                                if value is not None:
+                                    timestamp = datetime.now()
+                                    logging.info(f"Valid data received: {value} {unit}, Temp: {temperature}")
+                                    
+                                    # บันทึกข้อมูลลงไฟล์ CSV
+                                    success = save_to_csv(timestamp, value, unit, temperature)
+                                    if success:
+                                        logging.info(f"Data successfully saved to CSV at {timestamp}")
+                                    else:
+                                        logging.error("Failed to save data to CSV")
+                                    
+                                    # เรียก callback function ถ้ามี
+                                    if data_callback:
+                                        data_callback(timestamp, value, unit, temperature)
+                                else:
+                                    logging.warning(f"Failed to parse line: {repr(line)}")
+                    
+                    # หากบัฟเฟอร์ยาวเกินไป (อาจมีข้อมูลที่ไม่สมบูรณ์ค้างอยู่) ให้ล้างทิ้ง
+                    if len(buffer) > 1024:
+                        logging.warning(f"Buffer too long ({len(buffer)} bytes), clearing it")
+                        buffer = ""
+            except Exception as read_error:
+                logging.error(f"Error reading data: {read_error}", exc_info=True)
+                
+            # รอสักครู่ก่อนอ่านข้อมูลใหม่
             time.sleep(MEASUREMENT_INTERVAL)
                 
     except serial.SerialException as e:
@@ -269,51 +369,54 @@ def read_and_process_data(ser_port=None, baud_rate=None,
             print("Serial port closed")
 
 def ensure_log_directory_exists():
-    """Ensure that the directory for the log file exists and is writable."""
+    """Ensure log directory exists and is writable."""
+    config = get_config()
+    log_file = get_log_file_path()
+    log_dir = os.path.dirname(log_file)
+    
+    print(f"Checking log directory: {log_dir}")
+    
     try:
-        # Get absolute path of current working directory
-        current_dir = os.getcwd()
-        print(f"Current working directory: {current_dir}")
-        
-        # Get the directory part of the log file path
-        log_dir = os.path.dirname(LOG_FILE)
-        
-        # If LOG_FILE is just a filename without directory
-        if not log_dir:
-            # Use the current directory
-            log_path = os.path.join(current_dir, LOG_FILE)
-            log_dir = current_dir
-        else:
-            # Create absolute path if it's relative
-            if not os.path.isabs(log_dir):
-                log_dir = os.path.join(current_dir, log_dir)
-                log_path = os.path.join(current_dir, LOG_FILE)
-            else:
-                log_path = LOG_FILE
-        
-        # Create directory if it doesn't exist
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Create directory chain if it doesn't exist
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
             print(f"Created log directory: {log_dir}")
         
-        print(f"Log file will be saved to: {log_path}")
-        
-        # Test if we can write to the directory with explicit path
+        # Test writing permissions with explicit path
         test_file = os.path.join(log_dir, ".write_test")
         try:
             with open(test_file, 'w') as f:
                 f.write('test')
             os.remove(test_file)
             print(f"Directory is writable: {log_dir}")
+            return True
         except Exception as write_error:
             print(f"WARNING: Directory is not writable: {log_dir}")
             print(f"Write error: {write_error}")
-            return False
+            
+            # Try a fallback directory in user's home
+            user_home = os.path.expanduser("~")
+            fallback_dir = os.path.join(user_home, "Condensate_Logs")
+            
+            try:
+                if not os.path.exists(fallback_dir):
+                    os.makedirs(fallback_dir)
+                
+                # Update configuration to use the fallback directory
+                config.set('logging', 'log_directory', fallback_dir)
+                config.save()
+                
+                print(f"Created fallback directory: {fallback_dir}")
+                print(f"Updated configuration to use fallback directory")
+                
+                return True
+            except Exception as fallback_error:
+                print(f"Failed to create fallback directory: {fallback_error}")
+                return False
         
-        return True
     except Exception as e:
         print(f"Error ensuring log directory exists: {e}")
-        print(f"Log file may not be writable: {LOG_FILE}")
+        print(f"Log file may not be writable: {log_file}")
         return False
 
 def check_filesystem_permissions():
@@ -382,6 +485,37 @@ def check_serial_availability():
         return True
     except:
         return False
+
+def get_log_file_path():
+    """Get the full path to the log file based on configuration."""
+    config = get_config()
+    log_file = config.get('logging', 'log_file', fallback="sension7_data.csv")
+    log_dir = config.get('logging', 'log_directory')
+    
+    # If log_dir is specified and valid, use it
+    if log_dir and os.path.exists(log_dir):
+        return os.path.join(log_dir, log_file)
+    
+    # If log_dir doesn't exist, try to create it
+    elif log_dir:
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            print(f"Created log directory: {log_dir}")
+            return os.path.join(log_dir, log_file)
+        except Exception as e:
+            print(f"Could not create log directory: {e}")
+            # Fall back to app directory or current directory
+    
+    # Fall back to the config directory
+    try:
+        app_dir = os.path.dirname(config.config_file)
+        if os.path.exists(app_dir) and os.access(app_dir, os.W_OK):
+            return os.path.join(app_dir, log_file)
+    except Exception:
+        pass
+    
+    # Last resort: use current directory
+    return os.path.join(os.getcwd(), log_file)
 
 # Only run initialization if this module is run directly
 if __name__ == "__main__":

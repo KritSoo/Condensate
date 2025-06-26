@@ -34,6 +34,13 @@ def show_settings_dialog(root_window):
     """Show the settings dialog."""
     settings_dialog = SettingsDialog(root_window)
     
+    # รอให้หน้าต่างตั้งค่าถูกปิด
+    root_window.wait_window(settings_dialog.window)
+    
+    # เมื่อปิดหน้าต่างตั้งค่าแล้ว รีเฟรช UI ตามการตั้งค่าใหม่
+    from gui_app import refresh_ui
+    refresh_ui()
+
 def main():
     """Main program entry point."""
     # Initialize configuration
@@ -43,6 +50,19 @@ def main():
     print(f"Starting Conductivity Data Logger")
     print(f"Device Model: {DEVICE_MODEL}")
     print(f"Serial Port: {SERIAL_PORT}, Baud Rate: {BAUD_RATE}")
+    
+    # Check and display mock data mode status
+    mock_mode = config.get('device', 'mock_data', fallback=True)
+    if mock_mode:
+        print("โปรแกรมกำลังทำงานในโหมดข้อมูลจำลอง (Mock Data Mode)")
+        print("หากต้องการเชื่อมต่อเครื่อง HACH Sension7 จริง โปรดทำตามขั้นตอนนี้:")
+        print("1. คลิกที่เมนู 'ไฟล์' และเลือก 'ตั้งค่า...'")
+        print("2. ในแท็บ 'การเชื่อมต่อ' ให้ยกเลิกการเลือก 'โหมดข้อมูลจำลอง'")
+        print("3. เลือกพอร์ตที่เชื่อมต่อกับเครื่อง (เช่น COM3)")
+        print("4. บันทึกการตั้งค่าและรีสตาร์ทโปรแกรม")
+    else:
+        print("โปรแกรมกำลังทำงานในโหมดวัดค่าจากเครื่องจริง")
+        print(f"เชื่อมต่อกับพอร์ต: {SERIAL_PORT}, ความเร็ว: {BAUD_RATE}")
     
     # Initialize GUI
     main_window = setup_gui()
@@ -65,12 +85,16 @@ def main():
     # Check filesystem permissions and create directories
     from serial_reader import ensure_log_directory_exists, check_filesystem_permissions
     
-    # Run diagnostic checks
-    if not ensure_log_directory_exists():
-        print("WARNING: Log directory may not be writable. Logging may fail.")
+    # Run diagnostic checks and ensure directories exist
+    ensure_log_directory_exists()
     
     # Check detailed filesystem permissions
     check_filesystem_permissions()
+    
+    # Update log file path with proper path from config
+    from serial_reader import get_log_file_path
+    log_file_path = get_log_file_path()
+    print(f"Using log file: {log_file_path}")
     
     # Create and start serial reading thread
     serial_thread = threading.Thread(
