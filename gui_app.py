@@ -66,12 +66,21 @@ def setup_gui():
     container.grid_columnconfigure(1, weight=1)
     container.grid_rowconfigure(0, weight=1)
     
+    # Set minimum width for control panel
+    control_frame.config(width=280)
+    
+    # Set initial size for graph area
+    graph_frame.config(width=700, height=700)
+    
     # Setup controls in control_frame
     setup_controls(control_frame)
     
     # Setup graph in graph_frame
     setup_graph(graph_frame, reset_callback=reset_zoom, 
                date_str=selected_date_str, graph_combo=graph_type_combobox)
+               
+    # Force update of all widgets to ensure proper layout
+    root.update_idletasks()
     
     # ใช้ธีมตามการตั้งค่า
     apply_theme(root)
@@ -515,16 +524,38 @@ def reset_filters():
 
 def update_current_readings(timestamp, conductivity, unit, temperature=None):
     """Update current reading labels."""
-    if conductivity is not None:
-        conductivity_value_label.config(text=f"{conductivity:.2f} {unit}")
-        if temperature is not None:
-            temperature_value_label.config(text=f"{temperature:.2f} °C")
-        time_label.config(text=timestamp.strftime("%Y-%m-%d %H:%M:%S"))
-    else:
-        # แสดงสถานะว่ากำลังรอข้อมูลแทนที่จะแสดง N/A
-        conductivity_value_label.config(text="กำลังรอข้อมูล...")
-        temperature_value_label.config(text="กำลังรอข้อมูล...")
-        time_label.config(text=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    global last_reading_time, conductivity_value_label, temperature_value_label, time_label
+    
+    try:
+        if conductivity is not None:
+            # มีการรับข้อมูลใหม่ จึงแสดงผล
+            conductivity_value_label.config(text=f"{conductivity:.2f} {unit}")
+            if temperature is not None:
+                temperature_value_label.config(text=f"{temperature:.2f} °C")
+            time_label.config(text=timestamp.strftime("%Y-%m-%d %H:%M:%S"))
+            
+            # บันทึกเวลาล่าสุดที่ได้รับข้อมูล
+            last_reading_time = timestamp
+            
+            # ตั้งค่าสถานะที่บอกว่ามีข้อมูลแล้ว และเก็บค่าล่าสุดไว้
+            update_current_readings.has_data = True
+            update_current_readings.last_conductivity = conductivity
+            update_current_readings.last_unit = unit
+            update_current_readings.last_temperature = temperature
+            
+            # อัพเดต UI เพื่อให้แน่ใจว่าข้อมูลแสดงทันที
+            root.update_idletasks()
+        elif not hasattr(update_current_readings, 'has_data') or not update_current_readings.has_data:
+            # ไม่เคยมีข้อมูลมาก่อน ให้แสดงสถานะรอข้อมูล
+            conductivity_value_label.config(text="กำลังรอข้อมูล...")
+            temperature_value_label.config(text="กำลังรอข้อมูล...")
+            time_label.config(text=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            
+            # อัพเดต UI เพื่อให้แน่ใจว่าข้อมูลแสดงทันที
+            root.update_idletasks()
+    except Exception as e:
+        print(f"Error updating readings: {e}")
+    # ไม่ต้อง reset ค่าถ้าไม่มีข้อมูลใหม่ เพื่อให้ค่าเดิมยังคงแสดงอยู่
 
 def apply_filters(x_timestamps, y_conductivities, filter_min, filter_max):
     """Apply min/max filters to data."""

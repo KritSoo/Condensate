@@ -19,7 +19,8 @@ DEFAULT_CONFIG = {
     "logging": {
         "log_file": "sension7_data.csv",
         "backup_enabled": True,
-        "log_directory": ""  # Will be set during initialization
+        "log_directory": "",  # Will be set during initialization
+        "use_project_file": True  # ใช้ไฟล์ในโฟลเดอร์โปรเจคเป็นค่าเริ่มต้น
     },
     "display": {
         "update_interval": 2.0,

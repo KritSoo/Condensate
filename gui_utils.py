@@ -61,8 +61,32 @@ def _is_csv_changed():
     """Check if CSV file has been modified since last read"""
     try:
         import os
-        current_size = os.path.getsize('sension7_data.csv')
-        current_mtime = os.path.getmtime('sension7_data.csv')
+        from config_manager import get_config
+        
+        # เลือกไฟล์ตามโหมดการทำงาน
+        config = get_config()
+        mock_mode = config.get('device', 'mock_data', fallback=True)
+        
+        # เลือกไฟล์ที่จะตรวจสอบตามโหมด
+        if mock_mode:
+            csv_file = 'sension7_data.csv'
+        else:
+            csv_file = 'collect_data_sension.csv'
+        
+        # ถ้าไฟล์ไม่มี ให้ลองใช้ไฟล์สำรองในโฟลเดอร์ผู้ใช้
+        if not os.path.exists(csv_file):
+            user_home = os.path.expanduser("~")
+            backup_file = os.path.join(user_home, f"condensate_backup_{csv_file}")
+            if os.path.exists(backup_file):
+                csv_file = backup_file
+                print(f"Using backup CSV file: {backup_file}")
+            else:
+                print(f"Warning: No CSV file found for mode: {'MOCK' if mock_mode else 'REAL'}")
+                return True  # Assume changed if file doesn't exist
+        
+        # ตรวจสอบการเปลี่ยนแปลงของไฟล์
+        current_size = os.path.getsize(csv_file)
+        current_mtime = os.path.getmtime(csv_file)
         
         if (_data_cache['csv_file_size'] != current_size or 
             (_data_cache['last_update_time'] is not None and 
@@ -84,8 +108,32 @@ def get_available_dates(force_refresh=False):
         return _data_cache['all_dates']
         
     available_dates = set()
+    import os
+    from config_manager import get_config
+    
+    # เลือกไฟล์ตามโหมดการทำงาน
+    config = get_config()
+    mock_mode = config.get('device', 'mock_data', fallback=True)
+    
+    # เลือกไฟล์ที่จะตรวจสอบตามโหมด
+    if mock_mode:
+        csv_file = 'sension7_data.csv'
+    else:
+        csv_file = 'collect_data_sension.csv'
+    
+    # ถ้าไฟล์ไม่มี ให้ลองใช้ไฟล์สำรองในโฟลเดอร์ผู้ใช้
+    if not os.path.exists(csv_file):
+        user_home = os.path.expanduser("~")
+        backup_file = os.path.join(user_home, f"condensate_backup_{csv_file}")
+        if os.path.exists(backup_file):
+            csv_file = backup_file
+            print(f"Using backup CSV file for date list: {backup_file}")
+        else:
+            print(f"Warning: No CSV file found for mode: {'MOCK' if mock_mode else 'REAL'}")
+            return []  # Return empty list if file doesn't exist
+    
     try:
-        with open('sension7_data.csv', 'r') as file:
+        with open(csv_file, 'r') as file:
             reader = csv.DictReader(file)
             for row in reader:
                 timestamp = datetime.strptime(row['Timestamp'], '%Y-%m-%d %H:%M:%S')
@@ -171,7 +219,30 @@ def export_to_excel():
         ws['D1'] = 'Temperature'
         
         # Read and write data
-        with open('sension7_data.csv', 'r') as file:
+        # เลือกไฟล์ตามโหมดการทำงาน
+        from config_manager import get_config
+        import os
+        
+        config = get_config()
+        mock_mode = config.get('device', 'mock_data', fallback=True)
+        
+        # เลือกไฟล์ที่จะอ่านตามโหมด
+        if mock_mode:
+            csv_file = 'sension7_data.csv'
+        else:
+            csv_file = 'collect_data_sension.csv'
+            
+        if not os.path.exists(csv_file):
+            # ลองใช้ไฟล์สำรอง
+            user_home = os.path.expanduser("~")
+            backup_file = os.path.join(user_home, f"condensate_backup_{csv_file}")
+            if os.path.exists(backup_file):
+                csv_file = backup_file
+            else:
+                raise FileNotFoundError(f"No data file found for {'mock' if mock_mode else 'real'} mode")
+                
+        print(f"Exporting data from: {csv_file}")
+        with open(csv_file, 'r') as file:
             reader = csv.DictReader(file)
             for idx, row in enumerate(reader, start=2):
                 ws[f'A{idx}'] = row['Timestamp']
@@ -215,7 +286,32 @@ def read_csv_data(date_str, force_refresh=False):
     unit = "uS/cm"
     
     try:
-        with open('sension7_data.csv', 'r') as file:
+        # เลือกไฟล์ตามโหมดการทำงาน
+        import os
+        from config_manager import get_config
+        
+        config = get_config()
+        mock_mode = config.get('device', 'mock_data', fallback=True)
+        
+        # เลือกไฟล์ที่จะอ่านข้อมูลตามโหมด
+        if mock_mode:
+            csv_file = 'sension7_data.csv'
+        else:
+            csv_file = 'collect_data_sension.csv'
+            
+        # ตรวจสอบว่าไฟล์มีอยู่หรือไม่
+        if not os.path.exists(csv_file):
+            # ลองใช้ไฟล์สำรอง
+            user_home = os.path.expanduser("~")
+            backup_file = os.path.join(user_home, f"condensate_backup_{csv_file}")
+            if os.path.exists(backup_file):
+                csv_file = backup_file
+                print(f"Using backup file for reading data: {backup_file}")
+            else:
+                print(f"Warning: No data file found for {'mock' if mock_mode else 'real'} mode")
+                return timestamps, conductivities, temperatures, unit
+        
+        with open(csv_file, 'r') as file:
             reader = csv.DictReader(file)
             for row in reader:
                 timestamp = datetime.strptime(row['Timestamp'], '%Y-%m-%d %H:%M:%S')

@@ -9,13 +9,14 @@ Date: 2024
 import serial
 import time
 from datetime import datetime, timedelta
-import csv
 import re
 import os
 import random  # Add import for random number generation
 import logging  # เพิ่ม logging เพื่อดี bug ได้ง่ายขึ้น
 import sys
 import tempfile
+import csv  # ยังคงต้องใช้สำหรับการอ่านไฟล์เดิมที่อาจมีอยู่
+from db_manager import save_data, init_database, get_connection, get_data_table_name
 
 # ตรวจสอบและสร้างไฟล์ log ในตำแหน่งที่เขียนได้
 try:
@@ -105,121 +106,31 @@ def parse_data(raw_data_string):
         return None, None, None
 
 def save_to_csv(timestamp, conductivity_value, unit, temperature=None, filename=None):
-    """Save measurement data to CSV file with headers if new file."""
-    # Prepare data row
-    data_row = [
-        timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-        conductivity_value,
-        unit,
-        temperature
-    ]
+    """บันทึกข้อมูลลงในฐานข้อมูลโดยใช้ระบบ db_manager"""
+    # เรียกใช้ฟังก์ชันบันทึกข้อมูลจาก db_manager
+    success = save_data(timestamp, conductivity_value, unit, temperature)
     
-    # Get the file path from configuration if not specified
-    if filename is None:
-        filepath = get_log_file_path()
-    elif not os.path.isabs(filename):
-        # If relative path, use the configured log directory
-        config = get_config()
-        log_dir = config.get('logging', 'log_directory')
-        if log_dir and os.path.exists(log_dir):
-            filepath = os.path.join(log_dir, filename)
-        else:
-            filepath = os.path.join(os.getcwd(), filename)
+    # แสดงสถานะการบันทึก
+    config = get_config()
+    mock_mode = config.get('device', 'mock_data', fallback=True)
+    mode_text = "MOCK" if mock_mode else "REAL"
+    
+    # แสดงชื่อตาราง
+    table_name = get_data_table_name()
+    
+    if success:
+        print(f"\n[{mode_text} MODE] บันทึกข้อมูลสำเร็จที่ตาราง: {table_name}")
     else:
-        filepath = filename
+        print(f"\n[{mode_text} MODE] เกิดข้อผิดพลาดในการบันทึกข้อมูลที่ตาราง: {table_name}")
     
-    # Try to write to the main file
-    try:
-        # Create directory if it doesn't exist
-        directory = os.path.dirname(filepath)
-        if directory and not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
-            
-        file_exists = os.path.isfile(filepath)
-        # Use explicit mode 'a' for append
-        with open(filepath, 'a', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            if not file_exists:
-                writer.writerow(['Timestamp', 'Conductivity', 'Unit', 'Temperature'])
-            writer.writerow(data_row)
-        
-        # Verify file was written
-        if os.path.isfile(filepath):
-            return True  # Successfully wrote to the file
-        else:
-            print(f"Warning: File doesn't exist after write: {filepath}")
-            
-    except IOError as e:
-        print(f"Error saving to main CSV: {e}")
-        
-        # If main file has issues, try to save to a backup file
-        try:
-            # Use user's home directory for backup to avoid permission issues
-            home_dir = os.path.expanduser("~")
-            backup_filename = f"condensate_backup_{os.path.basename(filepath)}"
-            backup_filepath = os.path.join(home_dir, backup_filename)
-            
-            backup_exists = os.path.isfile(backup_filepath)
-            
-            print(f"Attempting to save to backup file: {backup_filepath}")
-            with open(backup_filepath, 'a', newline='') as backup_file:
-                writer = csv.writer(backup_file)
-                if not backup_exists:
-                    writer.writerow(['Timestamp', 'Conductivity', 'Unit', 'Temperature'])
-                writer.writerow(data_row)
-            print(f"Data saved to backup file: {backup_filepath}")
-            return True  # Successfully wrote to backup file
-        except Exception as backup_e:
-            print(f"Error saving to backup CSV: {backup_e}")
-            
-            # Last resort: Try to write to user's temp directory
-            try:
-                import tempfile
-                temp_dir = tempfile.gettempdir()
-                last_resort_file = os.path.join(temp_dir, "condensate_emergency_backup.csv")
-                last_resort_exists = os.path.isfile(last_resort_file)
-                
-                with open(last_resort_file, 'a', newline='') as emergency_file:
-                    writer = csv.writer(emergency_file)
-                    if not last_resort_exists:
-                        writer.writerow(['Timestamp', 'Conductivity', 'Unit', 'Temperature'])
-                    writer.writerow(data_row)
-                print(f"Data saved to emergency backup: {last_resort_file}")
-                return True
-            except Exception as e_backup:
-                print(f"All backup attempts failed: {e_backup}")
-                return False
-    except Exception as e:
-        print(f"Unexpected error saving to CSV: {e}")
-        return False
+    return success
+
 
 def generate_mock_historical_data(num_days=7):
-    """Generate mock historical conductivity and temperature data."""
-    print(f"Generating {num_days} days of mock historical data...")
-    
-    end_time = datetime.now()  # Use exact current time
-    start_time = end_time - timedelta(days=num_days)
-    current_time = start_time
-    
-    while current_time < end_time:
-        base_value = random.uniform(MIN_MOCK_VALUE, MAX_MOCK_VALUE * 0.6)
-        temperature = random.uniform(MIN_MOCK_TEMP, MAX_MOCK_TEMP)
-        
-        if random.random() < SPIKE_PROBABILITY:
-            base_value = random.uniform(MAX_MOCK_VALUE * 0.7, MAX_MOCK_VALUE)
-        
-        unit = random.choice(["uS/cm", "mS/cm"])
-        
-        # Add random minutes and seconds
-        current_time = current_time + timedelta(
-            hours=2,
-            minutes=random.randint(0, 59),
-            seconds=random.randint(0, 59)
-        )
-        
-        save_to_csv(current_time, base_value, unit, temperature)
-    
-    print("Historical mock data generation complete")
+    """Generate mock historical conductivity and temperature data using data_manager."""
+    from data_manager import generate_mock_data
+    generate_mock_data(num_days)
+
 
 def read_and_process_data(ser_port=None, baud_rate=None, 
                          timeout=None, data_callback=None):
@@ -235,13 +146,12 @@ def read_and_process_data(ser_port=None, baud_rate=None,
     ser = None
     try:
         # Run diagnostic checks before starting
-        ensure_log_directory_exists()
-        check_filesystem_permissions()
+        ensure_database_connection()
         
         # Log starting configuration
         logging.info(f"Starting serial reading with: PORT={ser_port}, BAUD={baud_rate}, TIMEOUT={timeout}")
         logging.info(f"Using device model: {DEVICE_MODEL}")
-        logging.info(f"Log file path: {get_log_file_path()}")
+        logging.info(f"Using data table: {get_data_table_name()}")
         
         # Use direct file writes to verify system is working
         test_file = "serial_reader_test.txt"
@@ -254,8 +164,9 @@ def read_and_process_data(ser_port=None, baud_rate=None,
             logging.warning(f"WARNING: Could not create test file: {e}")
         
         if MOCK_DATA_MODE:
-            if not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0:
-                generate_mock_historical_data(num_days=7)
+            # เตรียมไฟล์ข้อมูลจำลอง
+            from data_manager import init_data_files
+            init_data_files()
             
             print("Running in MOCK DATA mode")
             while True:
@@ -265,7 +176,7 @@ def read_and_process_data(ser_port=None, baud_rate=None,
                     mock_temp = random.uniform(MIN_MOCK_TEMP, MAX_MOCK_TEMP)
                     mock_unit = random.choice(["uS/cm", "mS/cm"])
                     
-                    # Added try-except block inside the loop
+                    # บันทึกข้อมูลด้วยระบบใหม่
                     try:
                         success = save_to_csv(timestamp, mock_value, mock_unit, mock_temp)
                         if success:
@@ -277,6 +188,7 @@ def read_and_process_data(ser_port=None, baud_rate=None,
                             data_callback(timestamp, mock_value, mock_unit, mock_temp)
                     except Exception as inner_e:
                         print(f"Error during data processing: {inner_e}")
+                        logging.error(f"Error during data processing: {inner_e}")
                         # Continue running even if a single data point fails
                     
                     # Reduced sleep time for debugging - change back to 1800 for production
@@ -368,56 +280,30 @@ def read_and_process_data(ser_port=None, baud_rate=None,
             ser.close()
             print("Serial port closed")
 
-def ensure_log_directory_exists():
-    """Ensure log directory exists and is writable."""
-    config = get_config()
-    log_file = get_log_file_path()
-    log_dir = os.path.dirname(log_file)
+def ensure_database_connection():
+    """Ensure database connection is working (using db_manager)."""
+    from db_manager import init_database, get_connection
     
-    print(f"Checking log directory: {log_dir}")
+    # เตรียมฐานข้อมูล
+    success = init_database()
     
-    try:
-        # Create directory chain if it doesn't exist
-        if log_dir and not os.path.exists(log_dir):
-            os.makedirs(log_dir, exist_ok=True)
-            print(f"Created log directory: {log_dir}")
-        
-        # Test writing permissions with explicit path
-        test_file = os.path.join(log_dir, ".write_test")
-        try:
-            with open(test_file, 'w') as f:
-                f.write('test')
-            os.remove(test_file)
-            print(f"Directory is writable: {log_dir}")
-            return True
-        except Exception as write_error:
-            print(f"WARNING: Directory is not writable: {log_dir}")
-            print(f"Write error: {write_error}")
-            
-            # Try a fallback directory in user's home
-            user_home = os.path.expanduser("~")
-            fallback_dir = os.path.join(user_home, "Condensate_Logs")
-            
-            try:
-                if not os.path.exists(fallback_dir):
-                    os.makedirs(fallback_dir)
-                
-                # Update configuration to use the fallback directory
-                config.set('logging', 'log_directory', fallback_dir)
-                config.save()
-                
-                print(f"Created fallback directory: {fallback_dir}")
-                print(f"Updated configuration to use fallback directory")
-                
-                return True
-            except Exception as fallback_error:
-                print(f"Failed to create fallback directory: {fallback_error}")
-                return False
-        
-    except Exception as e:
-        print(f"Error ensuring log directory exists: {e}")
-        print(f"Log file may not be writable: {log_file}")
+    # ทดสอบการเชื่อมต่อ
+    connection = get_connection()
+    connection_success = connection is not None
+    
+    if connection:
+        connection.close()
+    
+    print(f"Database connection status: {'Success' if connection_success else 'Failed'}")
+    logging.info(f"Database connection status: {'Success' if connection_success else 'Failed'}")
+    
+    # ถ้าไม่สำเร็จ
+    if not success or not connection_success:
+        print("Warning: Database connection failed")
+        logging.warning("Database connection failed")
         return False
+        
+    return True
 
 def check_filesystem_permissions():
     """Check permissions and state of the filesystem for the log file."""
@@ -486,40 +372,589 @@ def check_serial_availability():
     except:
         return False
 
-def get_log_file_path():
-    """Get the full path to the log file based on configuration."""
-    config = get_config()
-    log_file = config.get('logging', 'log_file', fallback="sension7_data.csv")
-    log_dir = config.get('logging', 'log_directory')
-    
-    # If log_dir is specified and valid, use it
-    if log_dir and os.path.exists(log_dir):
-        return os.path.join(log_dir, log_file)
-    
-    # If log_dir doesn't exist, try to create it
-    elif log_dir:
-        try:
-            os.makedirs(log_dir, exist_ok=True)
-            print(f"Created log directory: {log_dir}")
-            return os.path.join(log_dir, log_file)
-        except Exception as e:
-            print(f"Could not create log directory: {e}")
-            # Fall back to app directory or current directory
-    
-    # Fall back to the config directory
+def is_file_locked(filepath):
+    """ตรวจสอบว่าไฟล์ถูกล็อคหรือไม่ - เวอร์ชั่นเรียบง่ายและมีการตรวจสอบเพิ่มเติม"""
+    if not os.path.exists(filepath):
+        return False
+        
     try:
-        app_dir = os.path.dirname(config.config_file)
-        if os.path.exists(app_dir) and os.access(app_dir, os.W_OK):
-            return os.path.join(app_dir, log_file)
-    except Exception:
-        pass
+        # พยายามเปิดไฟล์ในโหมดเขียนและทดสอบเขียน
+        with open(filepath, 'a') as f:
+            # ทดสอบ flush และ fsync เพื่อให้แน่ใจว่าเขียนได้จริง
+            f.flush()
+            os.fsync(f.fileno())
+        return False  # สามารถเขียนได้ แสดงว่าไม่ถูกล็อค
+    except IOError as e:
+        print(f"File appears to be locked: {e}")
+        return True  # เขียนไม่ได้ แสดงว่าถูกล็อค
+
+def force_create_directory(dir_path):
+    """สร้างโฟลเดอร์แบบบังคับ พร้อมตั้งค่าสิทธิ์การเข้าถึง"""
+    if not os.path.exists(dir_path):
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+            print(f"สร้างโฟลเดอร์สำเร็จ: {dir_path}")
+            # พยายามให้สิทธิ์เข้าถึง (เฉพาะ Windows)
+            try:
+                import stat
+                os.chmod(dir_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                print(f"กำหนดสิทธิ์การเข้าถึงเต็มที่ให้กับโฟลเดอร์: {dir_path}")
+            except Exception as perm_e:
+                print(f"ไม่สามารถกำหนดสิทธิ์โฟลเดอร์: {perm_e}")
+        except Exception as e:
+            print(f"ไม่สามารถสร้างโฟลเดอร์: {dir_path}, error: {e}")
+            return False
     
-    # Last resort: use current directory
-    return os.path.join(os.getcwd(), log_file)
+    # ตรวจสอบว่าโฟลเดอร์เขียนได้หรือไม่
+    if not os.access(dir_path, os.W_OK):
+        print(f"⚠️ โฟลเดอร์ไม่สามารถเขียนได้: {dir_path}")
+        try:
+            # พยายามกำหนดสิทธิ์อีกครั้ง
+            import stat
+            os.chmod(dir_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+            print(f"พยายามกำหนดสิทธิ์การเข้าถึงอีกครั้ง")
+            
+            # ตรวจสอบอีกครั้งหลังกำหนดสิทธิ์
+            if os.access(dir_path, os.W_OK):
+                print(f"✅ สามารถเขียนโฟลเดอร์ได้แล้ว")
+                return True
+            else:
+                print(f"❌ ยังไม่สามารถเขียนโฟลเดอร์ได้หลังจากกำหนดสิทธิ์แล้ว")
+                return False
+        except Exception as perm2_e:
+            print(f"ไม่สามารถกำหนดสิทธิ์โฟลเดอร์: {perm2_e}")
+            return False
+    
+    return True
+
+def get_log_file_path():
+    """คืนค่าพาธของไฟล์ CSV ตามโหมดการทำงาน (wrapper สำหรับ backward compatibility)"""
+    # เรียกใช้จาก data_manager
+    from data_manager import get_data_file_path
+    return get_data_file_path()
+
+
+def ensure_files_ready():
+    """ตรวจสอบและเตรียมไฟล์ข้อมูลให้พร้อมใช้งาน"""
+    from data_manager import init_data_files
+    return init_data_files()
+
 
 # Only run initialization if this module is run directly
 if __name__ == "__main__":
-    # Ensure the log directory exists at the start
-    ensure_log_directory_exists()
-    # Check filesystem permissions
-    check_filesystem_permissions()
+    # Ensure database connection is working
+    ensure_database_connection()
+    # Initialize database
+    init_database()
+
+def repair_csv_file(filepath):
+    """ตรวจสอบและซ่อมแซมไฟล์ CSV ที่เสียหาย"""
+    if not os.path.exists(filepath):
+        print(f"File does not exist, nothing to repair: {filepath}")
+        return False
+    
+    try:
+        print(f"Attempting to repair CSV file: {filepath}")
+        
+        # อ่านข้อมูลจากไฟล์เดิม
+        rows = []
+        valid_data = False
+        
+        try:
+            with open(filepath, 'r', newline='') as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if row:  # ถ้าไม่ใช่แถวว่าง
+                        rows.append(row)
+                        valid_data = True
+        except Exception as read_e:
+            print(f"Error reading original file: {read_e}")
+            # สร้างไฟล์ใหม่ด้วยเฮดเดอร์
+            rows = [['Timestamp', 'Conductivity', 'Unit', 'Temperature']]
+        
+        # ถ้าไฟล์ว่างหรือไม่มีข้อมูล
+        if not valid_data or len(rows) == 0:
+            rows = [['Timestamp', 'Conductivity', 'Unit', 'Temperature']]
+        
+        # สร้างไฟล์ชั่วคราวและเขียนข้อมูล
+        temp_file = filepath + '.temp'
+        with open(temp_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            for row in rows:
+                writer.writerow(row)
+        
+        # ตรวจสอบว่าสร้างไฟล์ชั่วคราวสำเร็จ
+        if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
+            # สำรองไฟล์เดิม
+            backup_file = filepath + '.bak'
+            try:
+                if os.path.exists(filepath):
+                    import shutil
+                    shutil.copy2(filepath, backup_file)
+                    print(f"Backed up original file to: {backup_file}")
+            except Exception as backup_e:
+                print(f"Could not backup original file: {backup_e}")
+            
+            # ลบไฟล์เดิม
+            try:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+            except Exception as remove_e:
+                print(f"Could not remove original file: {remove_e}")
+                # ใช้ชื่อไฟล์ใหม่แทน
+                filepath = filepath + '.new'
+            
+            # เปลี่ยนชื่อไฟล์ชั่วคราว
+            try:
+                os.rename(temp_file, filepath)
+                print(f"Successfully repaired CSV file: {filepath}")
+                return True
+            except Exception as rename_e:
+                print(f"Error renaming temp file: {rename_e}")
+                print(f"Repaired data is available in: {temp_file}")
+                return False
+        else:
+            print(f"Failed to create temp file")
+            return False
+    
+    except Exception as e:
+        print(f"Error repairing CSV file: {e}")
+        return False
+
+def create_safe_csv(filepath, headers=['Timestamp', 'Conductivity', 'Unit', 'Temperature']):
+    """สร้างไฟล์ CSV ใหม่ด้วยวิธีที่ปลอดภัยกับปัญหาสิทธิ์การเข้าถึง"""
+    print(f"Attempting to safely create CSV file: {filepath}")
+    
+    # ตรวจสอบว่าไฟล์มีอยู่แล้วหรือไม่
+    file_exists = os.path.exists(filepath) and os.path.isfile(filepath)
+    
+    if file_exists:
+        # ตรวจสอบสิทธิ์การเขียน
+        if not os.access(filepath, os.W_OK):
+            print(f"Warning: File exists but is not writable: {filepath}")
+            
+            try:
+                # พยายามเปลี่ยนสิทธิ์
+                import stat
+                os.chmod(filepath, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                print(f"Changed file permissions to allow writing")
+            except Exception as chmod_e:
+                print(f"Could not change file permissions: {chmod_e}")
+                return False
+            
+            # ตรวจสอบอีกครั้งว่าสามารถเขียนได้แล้ว
+            if not os.access(filepath, os.W_OK):
+                print(f"Still cannot write to file after permission change")
+                return False
+        
+        # ตรวจสอบว่าไฟล์ว่างหรือไม่
+        if os.path.getsize(filepath) == 0:
+            try:
+                # เขียนเฮดเดอร์
+                with open(filepath, 'w', newline='') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(headers)
+                print(f"Added headers to empty file: {filepath}")
+                return True
+            except Exception as write_e:
+                print(f"Error adding headers to empty file: {write_e}")
+                return False
+        else:
+            # มีข้อมูลอยู่แล้ว
+            print(f"File already exists and has content: {filepath}")
+            return True
+    else:
+        # ไฟล์ยังไม่มี ตรวจสอบสิทธิ์โฟลเดอร์
+        directory = os.path.dirname(filepath)
+        if not os.path.exists(directory):
+            try:
+                os.makedirs(directory, exist_ok=True)
+                print(f"Created directory: {directory}")
+            except Exception as mkdir_e:
+                print(f"Could not create directory: {mkdir_e}")
+                return False
+        
+        # ตรวจสอบสิทธิ์การเขียนในโฟลเดอร์
+        if not os.access(directory, os.W_OK):
+            print(f"Directory is not writable: {directory}")
+            return False
+        
+        # พยายามสร้างไฟล์และเขียนเฮดเดอร์
+        try:
+            with open(filepath, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(headers)
+            print(f"Created new CSV file with headers: {filepath}")
+            return True
+        except Exception as create_e:
+            print(f"Failed to create CSV file: {create_e}")
+            
+            # ลองใช้วิธี low-level
+            try:
+                import io
+                with io.open(filepath, 'w', newline='') as f:
+                    f.write(','.join(headers) + '\n')
+                print(f"Created file using alternate method: {filepath}")
+                return True
+            except Exception as alt_e:
+                print(f"All attempts to create file failed: {alt_e}")
+                return False
+
+def ensure_file_ready_for_writing(filepath):
+    """ตรวจสอบว่าไฟล์พร้อมสำหรับการเขียนหรือไม่ และพยายามแก้ไขถ้าไม่พร้อม
+    
+    Returns:
+        bool: True ถ้าพร้อม, False ถ้าไม่สามารถทำให้พร้อมได้
+    """
+    # 1. ตรวจสอบว่าโฟลเดอร์มีอยู่
+    directory = os.path.dirname(filepath)
+    if not os.path.exists(directory):
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except Exception as e:
+            print(f"Error creating directory: {e}")
+            return False
+            
+    # 2. ตรวจสอบว่าไฟล์ล็อคหรือไม่
+    if os.path.exists(filepath) and is_file_locked(filepath):
+        print(f"File is locked: {filepath}")
+        # พยายามสร้างใหม่
+        if not force_create_csv_file(filepath):
+            print("Could not recreate locked file")
+            return False
+            
+    # 3. ตรวจสอบว่าไฟล์มีอยู่หรือไม่
+    if not os.path.exists(filepath):
+        # สร้างไฟล์ใหม่พร้อมเฮดเดอร์
+        try:
+            with open(filepath, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Timestamp', 'Conductivity', 'Unit', 'Temperature'])
+            print(f"Created new file: {filepath}")
+        except Exception as e:
+            print(f"Error creating file: {e}")
+            return False
+            
+    # 4. ตรวจสอบว่าเขียนได้จริงหรือไม่
+    try:
+        # ทดสอบเปิดไฟล์ในโหมดเขียน
+        with open(filepath, 'a') as _:
+            pass
+        return True
+    except Exception as e:
+        print(f"File is not writable: {e}")
+        return False
+
+def force_create_csv_file(filepath):
+    """บังคับสร้างไฟล์ CSV พร้อมหัวคอลัมน์ ลบไฟล์เดิมถ้าจำเป็น พร้อมทั้งสำรองข้อมูลเดิม"""
+    backup_data = []
+    backup_created = False
+    
+    # ตรวจสอบว่าไฟล์มีอยู่หรือไม่
+    if os.path.exists(filepath):
+        # พยายามสำรองข้อมูลเดิมก่อน
+        try:
+            with open(filepath, 'r', newline='') as csvfile:
+                reader = csv.reader(csvfile)
+                backup_data = list(reader)
+                if len(backup_data) > 0:
+                    print(f"Backed up {len(backup_data)} rows of data in memory")
+                    backup_created = True
+        except Exception as backup_e:
+            print(f"Could not back up existing data: {backup_e}")
+        
+        # ลบไฟล์เดิม
+        try:
+            # พยายามปิด file descriptor ที่อาจค้างอยู่
+            try:
+                os.close(os.open(filepath, os.O_RDONLY))
+            except:
+                pass
+                
+            time.sleep(0.5)  # รอเล็กน้อย
+            os.remove(filepath)
+            print(f"Removed existing file: {filepath}")
+        except Exception as e:
+            print(f"Could not remove file: {e}")
+            
+            # พยายามใช้วิธีอื่นๆ
+            try:
+                import os.path
+                if os.name == 'nt':  # Windows
+                    os.system(f'del /f "{filepath}"')
+                else:  # Linux/Mac
+                    os.system(f'rm -f "{filepath}"')
+                print(f"Tried to remove file using system command")
+            except:
+                pass
+    
+    # สร้างไดเรกทอรีถ้าไม่มี
+    directory = os.path.dirname(filepath)
+    if directory and not os.path.exists(directory):
+        try:
+            os.makedirs(directory, exist_ok=True)
+            # ปรับสิทธิ์โฟลเดอร์
+            try:
+                import stat
+                os.chmod(directory, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+            except:
+                pass
+        except Exception as e:
+            print(f"Could not create directory: {e}")
+            return False
+    
+    # สร้างไฟล์ใหม่พร้อมหัวคอลัมน์
+    try:
+        with open(filepath, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Timestamp', 'Conductivity', 'Unit', 'Temperature'])
+            # เขียนข้อมูลที่สำรองไว้กลับลงไป (ถ้ามี)
+            if backup_created and len(backup_data) > 1:  # มีข้อมูลมากกว่าแค่หัวคอลัมน์
+                writer.writerows(backup_data[1:])  # เขียนทุกแถวยกเว้นหัวคอลัมน์
+                print(f"Restored {len(backup_data)-1} rows of data")
+        print(f"Successfully created file: {filepath}")
+        return True
+    except Exception as e:
+        print(f"Could not create file: {e}")
+        # ลองใช้วิธี low-level
+        try:
+            with open(filepath, 'w') as f:
+                f.write("Timestamp,Conductivity,Unit,Temperature\n")
+            print(f"Created file using alternate method: {filepath}")
+            return True
+        except:
+            return False
+
+def manage_data_files():
+    """จัดการไฟล์ข้อมูลตามโหมดการทำงาน
+    - โหมด mock: สร้างไฟล์จำลอง (ไม่ลบไฟล์จริง)
+    - โหมด real: ลบไฟล์จำลอง และเตรียมไฟล์จริง
+    """
+    print("\n===== MANAGING DATA FILES =====")
+    
+    config = get_config()
+    mock_mode = config.get('device', 'mock_data', fallback=True)
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    mock_file = os.path.join(project_dir, "sension7_data.csv")
+    real_file = os.path.join(project_dir, "collect_data_sension.csv")
+    
+    # ลบไฟล์ backup ที่อาจมีอยู่
+    backup_extensions = [".bak", ".backup", ".old", ".tmp"]
+    for base_file in ["sension7_data.csv", "collect_data_sension.csv"]:
+        for ext in backup_extensions:
+            backup_path = os.path.join(project_dir, f"{base_file}{ext}")
+            if os.path.exists(backup_path):
+                try:
+                    os.remove(backup_path)
+                    print(f"✓ Removed old backup file: {backup_path}")
+                except Exception as e:
+                    print(f"✗ Could not remove backup file: {e}")
+    
+    print(f"Project directory: {project_dir}")
+    print(f"Directory exists: {'✓ Yes' if os.path.exists(project_dir) else '✗ No'}")
+    is_writable = os.access(project_dir, os.W_OK) if os.path.exists(project_dir) else False
+    print(f"Directory writable: {'✓ Yes' if is_writable else '✗ No'}")
+    
+    # สร้างโฟลเดอร์โปรเจคหากไม่มี
+    if not os.path.exists(project_dir):
+        try:
+            os.makedirs(project_dir, exist_ok=True)
+            # ปรับสิทธิ์โฟลเดอร์
+            try:
+                import stat
+                os.chmod(project_dir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+            except:
+                pass
+            print(f"✓ Created project directory: {project_dir}")
+        except Exception as e:
+            print(f"✗ Could not create project directory: {e}")
+    
+    if mock_mode:
+        # โหมดจำลอง: ตรวจสอบและสร้างไฟล์จำลอง (ไม่ลบไฟล์จริง)
+        print("\n⚠️ Running in MOCK MODE - using simulated data")
+        
+        # ตรวจสอบไฟล์จำลอง
+        mock_file_needs_recreation = False
+        mock_file_status = "Unknown"
+        
+        if not os.path.exists(mock_file):
+            mock_file_status = "Missing"
+            mock_file_needs_recreation = True
+        elif os.path.getsize(mock_file) == 0:
+            mock_file_status = "Empty"
+            mock_file_needs_recreation = True
+        elif is_file_locked(mock_file):
+            mock_file_status = "Locked"
+            mock_file_needs_recreation = True
+        else:
+            # ตรวจสอบว่าไฟล์มีโครงสร้างที่ถูกต้อง
+            try:
+                with open(mock_file, 'r', newline='') as f:
+                    reader = csv.reader(f)
+                    headers = next(reader, None)
+                    if not headers or len(headers) < 4 or 'Timestamp' not in headers:
+                        mock_file_status = "Invalid Structure"
+                        mock_file_needs_recreation = True
+                    else:
+                        # ตรวจสอบว่ามีข้อมูลหรือไม่
+                        try:
+                            row = next(reader, None)
+                            if not row:
+                                mock_file_status = "No Data"
+                                mock_file_needs_recreation = True
+                            else:
+                                mock_file_status = "Valid"
+                        except:
+                            mock_file_status = "Corrupted"
+                            mock_file_needs_recreation = True
+            except Exception as e:
+                mock_file_status = f"Error: {str(e)}"
+                mock_file_needs_recreation = True
+        
+        print(f"Mock data file status: {mock_file_status}")
+        
+        if mock_file_needs_recreation:
+            print(f"⚙️ Recreating mock data file...")
+            # สร้างไฟล์เปล่าก่อน
+            if force_create_csv_file(mock_file):
+                print("✓ Created empty mock data file")
+                print("⚙️ Generating mock historical data...")
+                generate_mock_historical_data(num_days=7)
+            else:
+                print("✗ Failed to create mock data file")
+        else:
+            print(f"✓ Using existing mock data file: {mock_file}")
+            
+        # แสดงสถานะไฟล์จริง (ไม่ลบ)
+        if os.path.exists(real_file):
+            print(f"\nℹ️ Note: Real data file exists: {real_file}")
+            print(f"   It will not be used in mock mode but will be kept for real mode.")
+    else:
+        # โหมดจริง: เตรียมไฟล์จริง ลบไฟล์จำลอง
+        print("\n🔴 Running in REAL MODE - using actual sensor data")
+        
+        # ลบไฟล์จำลองถ้ามี
+        if os.path.exists(mock_file):
+            try:
+                os.remove(mock_file)
+                print(f"✓ Removed mock data file: {mock_file}")
+            except Exception as e:
+                print(f"✗ Could not remove mock data file: {e}")
+                # พยายามอีกครั้งด้วยวิธีอื่น
+                try:
+                    if os.name == 'nt':  # Windows
+                        os.system(f'del /f "{mock_file}"')
+                    else:  # Linux/Mac
+                        os.system(f'rm -f "{mock_file}"')
+                    if not os.path.exists(mock_file):
+                        print(f"✓ Removed mock file using system command")
+                except:
+                    pass
+        
+        # เตรียมไฟล์จริง
+        real_file_needs_recreation = False
+        if not os.path.exists(real_file):
+            print("Real data file missing, creating new one...")
+            real_file_needs_recreation = True
+        elif os.path.getsize(real_file) == 0:
+            print("Real data file is empty, recreating...")
+            real_file_needs_recreation = True
+        elif is_file_locked(real_file):
+            print("Real data file is locked, recreating...")
+            real_file_needs_recreation = True
+        
+        if real_file_needs_recreation:
+            print(f"⚙️ Creating/recreating real data file...")
+            if force_create_csv_file(real_file):
+                print(f"✓ Ready to collect data to: {real_file}")
+            else:
+                print(f"✗ Failed to create real data file!")
+        else:
+            print(f"✓ Using existing real data file: {real_file}")
+    
+    print("\n===== DATA FILES READY =====\n")
+
+def check_filesystem_health():
+    """ตรวจสอบสถานะระบบไฟล์และพยายามซ่อมแซม"""
+    print("\n===== CHECKING FILESYSTEM HEALTH =====")
+    
+    # ตรวจสอบโฟลเดอร์โปรเจค
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    print(f"Project directory: {project_dir}")
+    
+    # 1. ตรวจสอบการมีอยู่ของโฟลเดอร์
+    if not os.path.exists(project_dir):
+        print("Project directory doesn't exist, creating...")
+        try:
+            os.makedirs(project_dir, exist_ok=True)
+            print("✓ Created project directory")
+        except Exception as e:
+            print(f"✗ Failed to create project directory: {e}")
+    else:
+        print("✓ Project directory exists")
+        
+    # 2. ตรวจสอบสิทธิ์การเขียน
+    if not os.access(project_dir, os.W_OK):
+        print("✗ Project directory is not writable, attempting to fix...")
+        try:
+            import stat
+            os.chmod(project_dir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+            if os.access(project_dir, os.W_OK):
+                print("✓ Fixed directory permissions")
+            else:
+                print("✗ Failed to fix directory permissions")
+        except Exception as e:
+            print(f"✗ Error setting permissions: {e}")
+    else:
+        print("✓ Project directory is writable")
+    
+    # 3. ตรวจสอบพื้นที่ว่าง
+    try:
+        import shutil
+        free_space = shutil.disk_usage(project_dir).free
+        free_space_mb = free_space / (1024 * 1024)  # แปลงเป็น MB
+        print(f"Available disk space: {free_space_mb:.2f} MB")
+        
+        if free_space_mb < 10:  # น้อยกว่า 10 MB
+            print("⚠️ WARNING: Very low disk space!")
+        elif free_space_mb < 100:  # น้อยกว่า 100 MB
+            print("⚠️ Warning: Low disk space")
+    except Exception as e:
+        print(f"Could not check disk space: {e}")
+    
+    # 4. ตรวจสอบไฟล์ CSV
+    config = get_config()
+    mock_mode = config.get('device', 'mock_data', fallback=True)
+    
+    if mock_mode:
+        filename = "sension7_data.csv"
+    else:
+        filename = "collect_data_sension.csv"
+    
+    filepath = os.path.join(project_dir, filename)
+    
+    if os.path.exists(filepath):
+        print(f"File exists: {filepath}")
+        
+        # ตรวจสอบไฟล์ล็อค
+        if is_file_locked(filepath):
+            print("⚠️ File is locked, will attempt to repair at runtime")
+        else:
+            print("✓ File is not locked")
+            
+        # ตรวจสอบขนาดไฟล์
+        try:
+            file_size = os.path.getsize(filepath)
+            print(f"File size: {file_size} bytes")
+            
+            if file_size == 0:
+                print("⚠️ File is empty, will be recreated at runtime")
+        except Exception as e:
+            print(f"Error checking file size: {e}")
+    else:
+        print(f"File doesn't exist yet: {filepath}")
+        print("File will be created when needed")
+    
+    print("===== FILESYSTEM CHECK COMPLETE =====\n")
+    return True

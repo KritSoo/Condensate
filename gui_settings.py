@@ -157,10 +157,27 @@ class SettingsDialog:
         self.log_file_entry = ttk.Entry(file_frame, width=30)
         self.log_file_entry.pack(side="left")
         
+        ttk.Button(file_frame, text="เลือก...", 
+                  command=self.browse_log_file).pack(side="left", padx=5)
+        
         # Enable backup option
         self.backup_var = tk.BooleanVar()
         ttk.Checkbutton(self.logging_tab, text="เปิดใช้งานการสำรองข้อมูล", 
                         variable=self.backup_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=5)
+        
+        # Add option to use project file (recommended)
+        self.use_project_file_var = tk.BooleanVar()
+        ttk.Checkbutton(self.logging_tab, text="บันทึกข้อมูลลงในไฟล์ของโปรเจค (แนะนำ)", 
+                      variable=self.use_project_file_var,
+                      command=self.toggle_use_project_file).grid(row=3, column=0, columnspan=2, sticky="w", pady=5)
+        
+        # Add explanation about using project file
+        project_file_info = ttk.Label(self.logging_tab, 
+                         text="การเลือกตัวเลือกนี้จะบันทึกข้อมูลลงในไฟล์ sension7_data.csv ในโฟลเดอร์โปรเจค\n" +
+                              "ที่ Documents/GitHub/Condensate โดยตรง ทำให้สามารถดูข้อมูลล่าสุดและแสดงกราฟได้ทันที\n" +
+                              "(แนะนำให้เลือกตัวเลือกนี้)",
+                         foreground="green", wraplength=450)
+        project_file_info.grid(row=4, column=0, columnspan=2, sticky="w", pady=5)
         
         # Test file writing
         test_frame = ttk.Frame(self.logging_tab)
@@ -175,7 +192,7 @@ class SettingsDialog:
         # Directory status display
         self.dir_status_var = tk.StringVar(value="")
         ttk.Label(self.logging_tab, textvariable=self.dir_status_var,
-                 foreground="blue").grid(row=4, column=0, columnspan=2, sticky="w", pady=5)
+                 foreground="blue").grid(row=5, column=0, columnspan=2, sticky="w", pady=5)
     
     def create_device_tab(self):
         """Create device settings tab."""
@@ -258,6 +275,7 @@ class SettingsDialog:
         self.log_dir_entry.insert(0, log_dir)
         self.log_file_entry.insert(0, self.config.get('logging', 'log_file', fallback='sension7_data.csv'))
         self.backup_var.set(self.config.get('logging', 'backup_enabled', fallback=True))
+        self.use_project_file_var.set(self.config.get('logging', 'use_project_file', fallback=True))
         
         # Check directory status if specified
         if log_dir:
@@ -288,6 +306,7 @@ class SettingsDialog:
         self.config.set('logging', 'log_directory', self.log_dir_entry.get())
         self.config.set('logging', 'log_file', self.log_file_entry.get())
         self.config.set('logging', 'backup_enabled', self.backup_var.get())
+        self.config.set('logging', 'use_project_file', self.use_project_file_var.get())
         
         # Device settings
         self.config.set('device', 'model', self.device_combobox.get())
@@ -858,3 +877,39 @@ class SettingsDialog:
                 "ข้อผิดพลาด", 
                 f"เกิดข้อผิดพลาดในการรีเซ็ตธีม: {str(e)}"
             )
+    
+    def toggle_use_project_file(self):
+        """Handle toggling of the 'use project file' option."""
+        use_project = self.use_project_file_var.get()
+        
+        # If using project file, disable the file path entry and browse button
+        if use_project:
+            self.log_file_entry.configure(state='disabled')
+            # Find the browse button and disable it
+            for widget in self.logging_tab.winfo_children():
+                if isinstance(widget, ttk.Frame) and widget.winfo_children():
+                    for child in widget.winfo_children():
+                        if isinstance(child, ttk.Button) and "เลือก..." in child['text']:
+                            child.configure(state='disabled')
+                            break
+            
+            # Show message that project file will be used
+            project_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sension7_data.csv")
+            self.dir_status_var.set(f"ระบบจะบันทึกข้อมูลลงในไฟล์: {project_path}")
+            
+            # Set project file path to the entry field for reference
+            self.log_file_entry.delete(0, tk.END)
+            self.log_file_entry.insert(0, project_path)
+        else:
+            # Re-enable the file path entry and browse button
+            self.log_file_entry.configure(state='normal')
+            # Find the browse button and enable it
+            for widget in self.logging_tab.winfo_children():
+                if isinstance(widget, ttk.Frame) and widget.winfo_children():
+                    for child in widget.winfo_children():
+                        if isinstance(child, ttk.Button) and "เลือก..." in child['text']:
+                            child.configure(state='normal')
+                            break
+            
+            # Clear the status message
+            self.dir_status_var.set("โปรดเลือกตำแหน่งไฟล์สำหรับบันทึกข้อมูล")
